@@ -1,0 +1,9 @@
+project:
+  output-dir: _docs
+
+website:
+  title: "toolformer"
+  site-url: "https://xrsrke.github.io/toolformer"
+  description: "Implementation of Toolformer"
+  repo-branch: main
+  repo-url: "https://github.com/xrsrke/toolformer"
