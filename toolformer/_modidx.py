@@ -5,4 +5,4 @@ d = { 'settings': { 'branch': 'main',
                 'doc_host': 'https://xrsrke.github.io',
                 'git_url': 'https://github.com/xrsrke/toolformer',
                 'lib_path': 'toolformer'},
-  'syms': {'toolformer.core': {'toolformer.core.foo': ('core.html#foo', 'toolformer/core.py')}}}
+  'syms': {'toolformer.api': {'toolformer.api.execute_calculator': ('api.html#execute_calculator', 'toolformer/api.py')}}}
