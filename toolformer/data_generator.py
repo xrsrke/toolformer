@@ -8,11 +8,11 @@ from typing import List, Callable
 
 import torch
 
-from .api import APIBase
+from .api import BaseAPI
 
 # %% ../nbs/04_data_generator.ipynb 5
 class DataGenerator:
-    def __init__(self, configs: dict, apis: List[APIBase]):
+    def __init__(self, configs: dict, apis: List[BaseAPI]):
         self.start_token = configs["augmentation_data"]["start_token"]
         self.end_token = configs["augmentation_data"]["end_token"]
         self.sampling_threshold = configs["augmentation_data"]["sampling_threshold"]
