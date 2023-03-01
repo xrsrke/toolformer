@@ -1,0 +1,16 @@
+model:
+  path: gpt2
+  eos_token_id: 50256
+
+tokenizer:
+  path: gpt2
+
+dataset:
+  path: the_pile
+
+augmentation_data:
+  api_start_token: "["
+  api_end_token: "]"
+  api_arrow_output_token: "→"
+  sampling_threshold: 0.2
+  filtering_threshold: 0.3
