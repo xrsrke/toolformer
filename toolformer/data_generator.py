@@ -4,58 +4,100 @@
 __all__ = ['DataGenerator']
 
 # %% ../nbs/04_data_generator.ipynb 4
-from typing import List, Callable
+from typing import List, Callable, Tuple
 
 import torch
+from einops import rearrange
+from torchtyping import TensorType
+from langchain import PromptTemplate
 
 from .api import BaseAPI
 
 # %% ../nbs/04_data_generator.ipynb 5
 class DataGenerator:
-    def __init__(self, configs: dict, apis: List[BaseAPI]):
-        self.start_token = configs["augmentation_data"]["start_token"]
-        self.end_token = configs["augmentation_data"]["end_token"]
-        self.sampling_threshold = configs["augmentation_data"]["sampling_threshold"]
-        self.filtering_threshold = configs["augmentation_data"]["filtering_threshold"]
-        self.apis = apis
-        self.api_positions: List[int] = []
-    
-    def generate(
-        self,
-        prompt: str,
-        model: Callable,
-        tokenizer: Callable
-    ) -> List[str]:
-        prompt_ids = tokenizer(prompt, return_tensors="pt")["input_ids"][0]
-        generated_ids = prompt_ids
+    def __init__(self, configs: dict, model: Callable, tokenizer: Callable, apis: List[BaseAPI],):
+        self.api_start_token = tokenizer(configs["data_generator"]["api_start_character"], return_tensors="pt")["input_ids"][0]
+        self.api_end_token = tokenizer(configs["data_generator"]["api_end_character"], return_tensors="pt")["input_ids"][0]
+        self.api_output_character = tokenizer(configs["data_generator"]["api_output_character"], return_tensors="pt")["input_ids"][0]
         
-        # sampling
+        self.sampling_threshold = configs["data_generator"]["sampling_threshold"]
+        self.filtering_threshold = configs["data_generator"]["filtering_threshold"]
+        
+        self.apis = apis
+        self.model = model
+        self.tokenizer = tokenizer
+    
+    def _sampling(self, logits: TensorType["batch_size", "seq_len", "vocab_size"]):
+        pass
+    
+    def _generate_api_position(
+        self,
+        prompt_ids: TensorType["batch_size", "seq_len"], # the ids of the prompt
+    ) -> Tuple[
+        TensorType["batch_size", "n_positions"], # The positions of api call
+        TensorType["batch_size", "seq_len"] # The generated text
+    ]:
+        # TODO: add support batch
+        generated_ids = prompt_ids
+        api_positions = torch.tensor([])
+        
         with torch.no_grad():    
             while True:
-                logits = model(
-                    input_ids=generated_ids,
+                logits = self.model(
+                    input_ids=generated_ids.unsqueeze(0),
                 ).logits
 
-                last_token = logits[-1, :]
-                probs = torch.softmax(last_token, dim=-1)
+                last_logit = logits[0, -1, :]
+                probs = torch.softmax(last_logit, dim=-1)
                 
                 # find the top k tokens for api call
                 top_k_tokens = torch.topk(probs, k=5, dim=-1).indices
-                api_ids = torch.where(top_k_tokens == self.start_token)[0]
+                api_idx = torch.where(top_k_tokens == self.api_start_token)[0]
                 
-                if api_ids.size(0) > 0:
-                    api_positions = torch.cat((api_positions, api_ids), dim=0)
+                if api_idx.size(0) > 0:
+                    api_positions = torch.cat((api_positions, api_idx), dim=0)
                 
                 # sampling a token
-                next_token = torch.multinomial(probs, num_samples=1)
-                generated_ids = torch.cat((generated_ids, next_token), dim=0)
+                # next_token = torch.multinomial(probs, num_samples=1)
+                next_token = torch.argmax(probs, dim=-1)
+                next_token = next_token.unsqueeze(0)
+                generated_ids = torch.cat([generated_ids, next_token], dim=0)
                 
-                print(f"api_ids: {api_ids}")
-                print(f"top_k: {top_k_tokens}")
-                
-                if tokenizer.eos_token_id in top_k_tokens:
+                if self.tokenizer.eos_token_id in top_k_tokens:
                     break
         
+        return api_positions, generated_ids
+    
+    def _sampling_api(
+        self,
+        positions: TensorType["batch_size", "n_positions"],
+        generated_ids: TensorType["batch_size", "seq_len"],
+        prompt: PromptTemplate
+    ):
+        for position in positions:
+            for api in self.apis:
+                condition_text = generated_ids[:position]
+                conditioned_prompt = prompt.format(input=condition_text)
+                pass
+    
+    def _filter_api(
+        self,
+        idxs: List[int]
+    ):
+        pass
+    
+    def generate(
+        self,
+        prompt_tempalte: PromptTemplate,
+        text: str,
+    ) -> List[str]:
+        prompt = prompt_tempalte.format(input=text)
+        prompt_ids = self.tokenizer(prompt, return_tensors="pt")["input_ids"][0]  
+        
+        # sampling
+        # TODO: add support batch
+        positions, generated_ids = self._generate_api_position(prompt_ids)
+        return positions, generated_ids
         # filtering
         
         # return

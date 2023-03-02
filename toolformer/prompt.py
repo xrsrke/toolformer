@@ -4,6 +4,11 @@
 __all__ = ['calculator_prompt']
 
 # %% ../nbs/02_prompt.ipynb 4
+# Input: A rectangle has a length of 6 cm and a width of 4 cm. The area of the rectangle is 24 square cm.
+# Output: A rectangle has a length of 6 cm and a width of 4 cm. The area of the rectangle is [Calculator("6 * 4")] square cm.
+# Input: The car traveled 200 miles in 4 hours. Its average speed was 50 miles per hour.
+# Output: The car traveled 200 miles in 4 hours. Its average speed was [Calculator(200 / 4)] 50 miles per hour.
+
 calculator_prompt = """
 Your task is to add calls to a Calculator API to a piece of text. The API call should help you get information required to complete the text. \n
 You can call the API by writing "Calculator(operation)!" where "operation" is the type of calculation you want to perform. Here are some examples of API calls:
@@ -14,11 +19,8 @@ Ouput: John has 5 apples and his friend gave him 3 more. John now has [Calculato
 Input: Jane needs to divide 24 pieces of candy equally among 6 kids. Each kid will get 4 pieces of candy.
 Output: Jane needs to divide 24 pieces of candy equally among 6 kids. Each kid will get [Calculator(24 / 6)] 4 pieces of candy.
 
-Input: A rectangle has a length of 6 cm and a width of 4 cm. The area of the rectangle is 24 square cm.
-Input: A rectangle has a length of 6 cm and a width of 4 cm. The area of the rectangle is [Calculator("6 * 4")] square cm.
-
-Input: The car traveled 200 miles in 4 hours. Its average speed was 50 miles per hour.
-Output: The car traveled 200 miles in 4 hours. Its average speed was [Calculator(200 / 4)] 50 miles per hour.
+Input: From this, we have 4 * 30 minutes = 120 minutes.
+Output: From this, we have 4 * 30 minutes = [Calculator(4 * 30)] 120 minutes.
 
 Input: {input}
 Output:
