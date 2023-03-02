@@ -7,7 +7,8 @@ __all__ = ['DataGenerator']
 from typing import List, Callable, Tuple
 
 import torch
-from einops import rearrange
+import torch.nn.functional as F
+
 from torchtyping import TensorType
 from langchain import PromptTemplate
 
@@ -35,10 +36,7 @@ class DataGenerator:
         # TODO: handle for cases that the sentence contains ".\n\n"
         self.eos_token_id = tokenizer(".\n\n")["input_ids"][0]
     
-    def _sampling(self, logits: TensorType["batch_size", "seq_len", "vocab_size"]):
-        pass
-    
-    def _generate_api_position(
+    def _sample_api_position(
         self,
         prompt_ids: TensorType["batch_size", "seq_len"], # the ids of the prompt
     ) -> Tuple[
@@ -72,14 +70,38 @@ class DataGenerator:
                 next_token = next_token.unsqueeze(0)
                 generated_ids = torch.cat([generated_ids, next_token], dim=0)
                 
-                print("--------------------")
-                print(f"next_token={next_token}")
-                print(f"positions={api_positions}")
-                print(f"text={self.tokenizer.decode(generated_ids)}")
+                # print("--------------------")
+                # print(f"next_token={next_token}")
+                # print(f"positions={api_positions}")
+                # print(f"text={self.tokenizer.decode(generated_ids)}")
                 
                 if next_token == self.eos_token_id: break
         
-        return api_positions, generated_ids
+        return api_positions.long(), generated_ids.long()
+
+    def _obtain_api_call(
+        self,
+        positions: TensorType["batch_size", "n_positions"],
+        generated_ids: TensorType["batch_size", "seq_len"]
+    ) -> TensorType["batch_size", "n_positions", "seq_len"]:
+        MAX_PAD = 1000
+        PAD_TOKEN = self.tokenizer.pad_token_id
+        candidates = torch.tensor([])
+
+        for position in positions:
+            text_ids = torch.cat([generated_ids[:position], self.api_start_token])
+            output = self.model.generate(
+                input_ids=text_ids.unsqueeze(0),
+                eos_token_id=self.eos_token_id,
+                max_new_tokens=100,
+            )
+            
+            N_PAD = MAX_PAD - output.shape[-1]
+            candidates = torch.cat([
+                candidates,
+                F.pad(output[0], pad=(0, N_PAD), value=PAD_TOKEN).unsqueeze(0).long()
+            ], dim=0)
+        return candidates.long()
     
     def _sampling_api(
         self,
@@ -106,11 +128,12 @@ class DataGenerator:
     ) -> List[str]:
         prompt = prompt_tempalte.format(input=text)
         prompt_ids = self.tokenizer(prompt, return_tensors="pt")["input_ids"][0]  
-        
-        # sampling
         # TODO: add support batch
-        positions, generated_ids = self._generate_api_position(prompt_ids)
-        return positions, generated_ids
+        # sampling
+        api_positions, generated_ids = self._sample_api_position(prompt_ids)
+        
+        # obtaining API calls
+        candidates = self._obtain_api_call(api_positions, generated_ids)
         # filtering
         
-        # return
+        return candidates

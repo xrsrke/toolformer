@@ -6,7 +6,7 @@ ToolFormer - 🚧 WORK IN PROGRESS 🚧
 I’m implementing it on stream. Wanna watch it on live? Go:
 twitch.tv/xrsrke
 
-![image.png](index_files/figure-commonmark/c53a79c2-1-image.png)
+![image.png](index_files/figure-commonmark/665784a3-1-image.png)
 
 Paper: [Toolformer: Language Models Can Teach Themselves to Use
 Tools](https://arxiv.org/abs/2302.04761)
@@ -29,7 +29,8 @@ Tools](https://arxiv.org/abs/2302.04761)
 
 ### Resources
 
-Here’re resources that i used to implement this -
-https://www.youtube.com/live/RLcr4bqGsEQ?feature=share: for
-understanding the paper - https://github.com/conceptofmind/toolformer:
-for prompting the model
+Here’re resources that i used to implement this
+
+- https://www.youtube.com/live/RLcr4bqGsEQ?feature=share: for
+  understanding the paper
+- https://github.com/conceptofmind/toolformer: for prompting the model
