@@ -15,17 +15,25 @@ from .api import BaseAPI
 
 # %% ../nbs/04_data_generator.ipynb 5
 class DataGenerator:
-    def __init__(self, configs: dict, model: Callable, tokenizer: Callable, apis: List[BaseAPI],):
-        self.api_start_token = tokenizer(configs["data_generator"]["api_start_character"], return_tensors="pt")["input_ids"][0]
-        self.api_end_token = tokenizer(configs["data_generator"]["api_end_character"], return_tensors="pt")["input_ids"][0]
-        self.api_output_character = tokenizer(configs["data_generator"]["api_output_character"], return_tensors="pt")["input_ids"][0]
+    def __init__(self, config: dict, model: Callable, tokenizer: Callable, apis: List[BaseAPI],):
+        start_character = config["data_generator"]["api_start_character"]
+        end_character = config["data_generator"]["api_end_character"]
+        output_character = config["data_generator"]["api_output_character"]
         
-        self.sampling_threshold = configs["data_generator"]["sampling_threshold"]
-        self.filtering_threshold = configs["data_generator"]["filtering_threshold"]
+        # add a space, because when the model generate a token, it's also include a "space"
+        self.api_start_token = tokenizer(f' {start_character}', return_tensors="pt")["input_ids"][0]
+        self.api_end_token = tokenizer(f'{end_character}', return_tensors="pt")["input_ids"][0]
+        self.api_output_character = tokenizer(f' {output_character}', return_tensors="pt")["input_ids"][0]
+        
+        self.top_k = config["data_generator"]["top_k"]
+        self.sampling_threshold = config["data_generator"]["sampling_threshold"]
+        self.filtering_threshold = config["data_generator"]["filtering_threshold"]
         
         self.apis = apis
         self.model = model
         self.tokenizer = tokenizer
+        # TODO: handle for cases that the sentence contains ".\n\n"
+        self.eos_token_id = tokenizer(".\n\n")["input_ids"][0]
     
     def _sampling(self, logits: TensorType["batch_size", "seq_len", "vocab_size"]):
         pass
@@ -52,10 +60,10 @@ class DataGenerator:
                 
                 # find the top k tokens for api call
                 top_k_tokens = torch.topk(probs, k=5, dim=-1).indices
-                api_idx = torch.where(top_k_tokens == self.api_start_token)[0]
                 
-                if api_idx.size(0) > 0:
-                    api_positions = torch.cat((api_positions, api_idx), dim=0)
+                if self.api_start_token in top_k_tokens:
+                    api_position = torch.tensor([len(generated_ids)]) # the current idx
+                    api_positions = torch.cat((api_positions, api_position), dim=0)
                 
                 # sampling a token
                 # next_token = torch.multinomial(probs, num_samples=1)
@@ -63,8 +71,12 @@ class DataGenerator:
                 next_token = next_token.unsqueeze(0)
                 generated_ids = torch.cat([generated_ids, next_token], dim=0)
                 
-                if self.tokenizer.eos_token_id in top_k_tokens:
-                    break
+                print("--------------------")
+                print(f"next_token={next_token}")
+                print(f"positions={api_positions}")
+                print(f"text={self.tokenizer.decode(generated_ids)}")
+                
+                if next_token == self.eos_token_id: break
         
         return api_positions, generated_ids
     
