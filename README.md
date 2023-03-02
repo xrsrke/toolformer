@@ -6,7 +6,7 @@ ToolFormer (Pytorch) - 🚧 WORK IN PROGRESS 🚧
 I’m implementing it on stream. Wanna watch it on live? Go:
 twitch.tv/xrsrke
 
-![image.png](index_files/figure-commonmark/51c72bec-1-image.png)
+![image.png](index_files/figure-commonmark/591aee76-1-image.png)
 
 Paper: [Toolformer: Language Models Can Teach Themselves to Use
 Tools](https://arxiv.org/abs/2302.04761)

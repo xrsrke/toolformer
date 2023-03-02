@@ -70,11 +70,6 @@ class DataGenerator:
                 next_token = next_token.unsqueeze(0)
                 generated_ids = torch.cat([generated_ids, next_token], dim=0)
                 
-                # print("--------------------")
-                # print(f"next_token={next_token}")
-                # print(f"positions={api_positions}")
-                # print(f"text={self.tokenizer.decode(generated_ids)}")
-                
                 if next_token == self.eos_token_id: break
         
         return api_positions.long(), generated_ids.long()
