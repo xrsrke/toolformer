@@ -137,3 +137,5 @@ drafts/*
 
 _proc
 _proc/*
+
+.DS_Store
