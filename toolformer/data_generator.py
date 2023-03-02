@@ -22,7 +22,7 @@ class DataGenerator:
         
         # add a space, because when the model generate a token, it's also include a "space"
         self.api_start_token = tokenizer(f' {start_character}', return_tensors="pt")["input_ids"][0]
-        self.api_end_token = tokenizer(f'{end_character}', return_tensors="pt")["input_ids"][0]
+        self.api_end_token = tokenizer(end_character, return_tensors="pt")["input_ids"][0]
         self.api_output_character = tokenizer(f' {output_character}', return_tensors="pt")["input_ids"][0]
         
         self.top_k = config["data_generator"]["top_k"]
@@ -59,9 +59,10 @@ class DataGenerator:
                 probs = torch.softmax(last_logit, dim=-1)
                 
                 # find the top k tokens for api call
-                top_k_tokens = torch.topk(probs, k=5, dim=-1).indices
+                # TODO: add filter by larger than sampling_threshold
+                top_k_tokens = torch.topk(probs, k=5, dim=-1)
                 
-                if self.api_start_token in top_k_tokens:
+                if self.api_start_token in top_k_tokens.indices:
                     api_position = torch.tensor([len(generated_ids)]) # the current idx
                     api_positions = torch.cat((api_positions, api_position), dim=0)
                 
