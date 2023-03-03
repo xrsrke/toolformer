@@ -4,6 +4,7 @@
 __all__ = ['DataGenerator']
 
 # %% ../nbs/04_data_generator.ipynb 4
+import re
 from typing import List, Callable, Tuple
 
 import torch
@@ -13,6 +14,7 @@ from torchtyping import TensorType
 from langchain import PromptTemplate
 
 from .api import BaseAPI
+from .api import CalculatorAPI
 
 # %% ../nbs/04_data_generator.ipynb 5
 class DataGenerator:
@@ -24,7 +26,7 @@ class DataGenerator:
         # add a space, because when the model generate a token, it's also include a "space"
         self.api_start_token = tokenizer(f' {start_character}', return_tensors="pt")["input_ids"][0]
         self.api_end_token = tokenizer(end_character, return_tensors="pt")["input_ids"][0]
-        self.api_output_character = tokenizer(f' {output_character}', return_tensors="pt")["input_ids"][0]
+        self.api_output_token = tokenizer(f'{output_character}', return_tensors="pt")["input_ids"][0]
         
         self.top_k = config["data_generator"]["top_k"]
         self.sampling_threshold = config["data_generator"]["sampling_threshold"]
@@ -97,6 +99,23 @@ class DataGenerator:
                 F.pad(output[0], pad=(0, N_PAD), value=PAD_TOKEN).unsqueeze(0).long()
             ], dim=0)
         return candidates.long()
+
+    def extract_api_request_content(self, text: str, api_name: str) -> str:
+        start_tag = f"{api_name}("
+        end_tag = ")"
+        start_idx = text.find(start_tag)
+        if start_idx == -1:
+            return None
+        start_idx += len(start_tag)
+        end_idx = text.find(end_tag, start_idx)
+        if end_idx == -1:
+            return None
+        return text[start_idx:end_idx]
+    
+    def extract_api_syntax(self, sentence: str, api_name: str) -> str:
+        pattern = r"\[{}\(.*?\)\]".format(api_name)
+        matches = re.findall(pattern, sentence)
+        return matches
     
     def _sampling_api(
         self,
@@ -104,31 +123,57 @@ class DataGenerator:
         generated_ids: TensorType["batch_size", "seq_len"],
         prompt: PromptTemplate
     ):
-        for position in positions:
-            for api in self.apis:
-                condition_text = generated_ids[:position]
-                conditioned_prompt = prompt.format(input=condition_text)
-                pass
+        pass
     
     def _filter_api(
         self,
-        idxs: List[int]
+        prompt_ids: TensorType["batch_size", "seq_len"],
+        candidates: List[int]
     ):
-        pass
+        calculator_api = CalculatorAPI()
+        conditioning_prompts = []
+
+        PROMPT_LENGTH = len(prompt_ids)
+        SPACE_TOKEN = self.tokenizer(" .", return_tensors="pt")["input_ids"][0]
+        API_NAME = "Calculator"
+
+        for candidate in candidates:
+            # the ids of the prediction
+            pred_ids = candidate[PROMPT_LENGTH:]
+            pred = self.tokenizer.decode(pred_ids, skip_special_tokens=True)
+            
+            api_request_content = self.extract_api_request_content(pred, api_name=API_NAME)
+            api_response = calculator_api(api_request_content)
+            api_response_with_arrow = torch.cat([self.api_output_token, self.tokenizer(api_response, return_tensors="pt")["input_ids"][0]], dim=0)
+            
+            api_syntax = self.extract_api_syntax(pred, api_name=API_NAME)
+            api_syntax_ids = self.tokenizer(api_syntax, return_tensors="pt")["input_ids"][0]
+            api_syntax_with_response_ids = torch.cat([api_syntax_ids[:-1], api_response_with_arrow, api_syntax_ids[-1:]])
+            
+            api_start_idx = torch.where(pred_ids == self.api_start_token)[0]
+            pred_exclude_api_ids = pred_ids[:api_start_idx]
+            next_token_ids = pred_ids[api_start_idx + 1]
+            
+            conditioning_prompts.append(torch.cat([api_syntax_with_response_ids, SPACE_TOKEN, pred_exclude_api_ids], dim=0))
+                    
+        return conditioning_prompts
     
     def generate(
         self,
         prompt_tempalte: PromptTemplate,
         text: str,
     ) -> List[str]:
+        # TODO: add support batch
         prompt = prompt_tempalte.format(input=text)
         prompt_ids = self.tokenizer(prompt, return_tensors="pt")["input_ids"][0]  
-        # TODO: add support batch
+        
         # sampling
-        api_positions, generated_ids = self._sample_api_position(prompt_ids)
+        api_start_positions, generated_ids = self._sample_api_position(prompt_ids)
         
         # obtaining API calls
-        candidates = self._obtain_api_call(api_positions, generated_ids)
+        candidates = self._obtain_api_call(api_start_positions, generated_ids)
+    
         # filtering
+        conditioning_prompts = self._filter_api(prompt_ids, candidates)
         
-        return candidates
+        return conditioning_prompts

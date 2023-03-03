@@ -1,6 +1,6 @@
 import pytest
 
-from toolformer.api import BaseAPI, execute_calculator
+from toolformer.api import CalculatorAPI
 
 
 # generate test for execute_calculator
@@ -13,5 +13,9 @@ from toolformer.api import BaseAPI, execute_calculator
     )
 )
 def test_execute_calculator_api(input, expected):
-    api = BaseAPI(func=execute_calculator)
-    assert api(input) == expected
+    calculator_api = CalculatorAPI()
+
+    output = calculator_api(input)
+
+    assert output == expected
+    assert isinstance(output, str)

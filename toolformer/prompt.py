@@ -45,4 +45,12 @@ Output:
 wolframe_prompt = """
 Your task is to add calls to a Scientific API to a piece of text. The questions should help you get information required to complete the text.
 You can call the API by writing "[Wolframe(question)]" where "question" is the question you want to ask. Here are some examples of API calls:
+
+Input: Joe Biden was born in Scranton, Pennsylvania
+Output: Joe Biden was born in [QA("Where was Joe Biden born?")] Scranton, [QA("In which state is Scranton?")] Pennsylvania.
+
+Input: The complex conjugate of 2 + 3i is 2 - 3i.
+Output: The complex conjugate of 2 + 3i is [Wolframe("What is the complex conjugate of 2 - 3i")] 2 - 3i.
+
+Input: How to find the 
 """
