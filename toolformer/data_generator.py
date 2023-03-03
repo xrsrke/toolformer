@@ -132,7 +132,7 @@ class DataGenerator:
     ):
         calculator_api = CalculatorAPI()
         conditioning_prompts = torch.tensor([])
-        target_ids = []
+        target_ids = torch.tensor([])
 
         PROMPT_LENGTH = len(prompt_ids)
         SPACE_TOKEN = self.tokenizer(" .", return_tensors="pt")["input_ids"][0]
@@ -162,7 +162,8 @@ class DataGenerator:
             padded_prompt = F.pad(prompt, pad=(0, N_PAD), value=PAD_TOKEN)
 
             conditioning_prompts = torch.cat([conditioning_prompts, padded_prompt.unsqueeze(0)], dim=0).long()
-            target_ids.append(next_token_ids)
+            # target_ids.append(next_token_ids)
+            target_ids = torch.cat([target_ids, torch.tensor(next_token_ids)], dim=0).long()
                     
         return target_ids, conditioning_prompts
     
