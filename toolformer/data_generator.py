@@ -131,11 +131,14 @@ class DataGenerator:
         candidates: List[int]
     ):
         calculator_api = CalculatorAPI()
-        conditioning_prompts = []
+        conditioning_prompts = torch.tensor([])
+        target_ids = []
 
         PROMPT_LENGTH = len(prompt_ids)
         SPACE_TOKEN = self.tokenizer(" .", return_tensors="pt")["input_ids"][0]
         API_NAME = "Calculator"
+        MAX_PAD = 100
+        PAD_TOKEN = self.tokenizer.pad_token_id
 
         for candidate in candidates:
             # the ids of the prediction
@@ -153,10 +156,15 @@ class DataGenerator:
             api_start_idx = torch.where(pred_ids == self.api_start_token)[0]
             pred_exclude_api_ids = pred_ids[:api_start_idx]
             next_token_ids = pred_ids[api_start_idx + 1]
-            
-            conditioning_prompts.append(torch.cat([api_syntax_with_response_ids, SPACE_TOKEN, pred_exclude_api_ids], dim=0))
+                        
+            prompt = torch.cat([api_syntax_with_response_ids, SPACE_TOKEN, pred_exclude_api_ids], dim=0)
+            N_PAD = MAX_PAD - prompt.shape[-1]
+            padded_prompt = F.pad(prompt, pad=(0, N_PAD), value=PAD_TOKEN)
+
+            conditioning_prompts = torch.cat([conditioning_prompts, padded_prompt.unsqueeze(0)], dim=0).long()
+            target_ids.append(next_token_ids)
                     
-        return conditioning_prompts
+        return target_ids, conditioning_prompts
     
     def generate(
         self,
@@ -174,6 +182,6 @@ class DataGenerator:
         candidates = self._obtain_api_call(api_start_positions, generated_ids)
     
         # filtering
-        conditioning_prompts = self._filter_api(prompt_ids, candidates)
+        target_ids, conditioning_prompts = self._filter_api(prompt_ids, candidates)
         
-        return conditioning_prompts
+        return target_ids, conditioning_prompts

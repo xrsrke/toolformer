@@ -47,10 +47,14 @@ Your task is to add calls to a Scientific API to a piece of text. The questions 
 You can call the API by writing "[Wolframe(question)]" where "question" is the question you want to ask. Here are some examples of API calls:
 
 Input: Joe Biden was born in Scranton, Pennsylvania
-Output: Joe Biden was born in [QA("Where was Joe Biden born?")] Scranton, [QA("In which state is Scranton?")] Pennsylvania.
+Output: Joe Biden was born in [Wolframe("Where was Joe Biden born?")] Scranton, [Wolframe("In which state is Scranton?")] Pennsylvania.
 
 Input: The complex conjugate of 2 + 3i is 2 - 3i.
 Output: The complex conjugate of 2 + 3i is [Wolframe("What is the complex conjugate of 2 - 3i")] 2 - 3i.
 
-Input: How to find the 
+Input: Solve x^2 + 4x + 6 = 0. The answer is x = -2 - i sqrt(2)
+Output: Solve x^2 + 4x + 6 = 0. The answer is [Wolframe("Solve x^2 + 4x + 6 = 0")] x = -2 - i sqrt(2)
+
+Input: {input}
+Output:
 """
