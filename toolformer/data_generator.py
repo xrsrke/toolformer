@@ -11,6 +11,7 @@ import torch
 import torch.nn.functional as F
 
 from torchtyping import TensorType
+from einops import rearrange
 from langchain import PromptTemplate
 
 from .api import BaseAPI
@@ -38,7 +39,24 @@ class DataGenerator:
         # TODO: handle for cases that the sentence contains ".\n\n"
         self.eos_token_id = tokenizer(".\n\n")["input_ids"][0]
     
-    def _sample_api_position(
+    def extract_api_request_content(self, text: str, api_name: str) -> str:
+        start_tag = f"{api_name}("
+        end_tag = ")"
+        start_idx = text.find(start_tag)
+        if start_idx == -1:
+            return None
+        start_idx += len(start_tag)
+        end_idx = text.find(end_tag, start_idx)
+        if end_idx == -1:
+            return None
+        return text[start_idx:end_idx]
+    
+    def extract_api_syntax(self, sentence: str, api_name: str) -> str:
+        pattern = r"\[{}\(.*?\)\]".format(api_name)
+        matches = re.findall(pattern, sentence)
+        return matches
+    
+    def sample_api_position(
         self,
         prompt_ids: TensorType["batch_size", "seq_len"], # the ids of the prompt
     ) -> Tuple[
@@ -76,7 +94,7 @@ class DataGenerator:
         
         return api_positions.long(), generated_ids.long()
 
-    def _obtain_api_call(
+    def obtain_api_response(
         self,
         positions: TensorType["batch_size", "n_positions"],
         generated_ids: TensorType["batch_size", "seq_len"]
@@ -87,11 +105,12 @@ class DataGenerator:
 
         for position in positions:
             text_ids = torch.cat([generated_ids[:position], self.api_start_token])
-            output = self.model.generate(
-                input_ids=text_ids.unsqueeze(0),
-                eos_token_id=self.eos_token_id,
-                max_new_tokens=100,
-            )
+            with torch.no_grad():
+                output = self.model.generate(
+                    input_ids=text_ids.unsqueeze(0),
+                    eos_token_id=self.eos_token_id,
+                    max_new_tokens=100,
+                )
             
             N_PAD = MAX_PAD - output.shape[-1]
             candidates = torch.cat([
@@ -99,33 +118,8 @@ class DataGenerator:
                 F.pad(output[0], pad=(0, N_PAD), value=PAD_TOKEN).unsqueeze(0).long()
             ], dim=0)
         return candidates.long()
-
-    def extract_api_request_content(self, text: str, api_name: str) -> str:
-        start_tag = f"{api_name}("
-        end_tag = ")"
-        start_idx = text.find(start_tag)
-        if start_idx == -1:
-            return None
-        start_idx += len(start_tag)
-        end_idx = text.find(end_tag, start_idx)
-        if end_idx == -1:
-            return None
-        return text[start_idx:end_idx]
     
-    def extract_api_syntax(self, sentence: str, api_name: str) -> str:
-        pattern = r"\[{}\(.*?\)\]".format(api_name)
-        matches = re.findall(pattern, sentence)
-        return matches
-    
-    def _sampling_api(
-        self,
-        positions: TensorType["batch_size", "n_positions"],
-        generated_ids: TensorType["batch_size", "seq_len"],
-        prompt: PromptTemplate
-    ):
-        pass
-    
-    def _filter_api(
+    def filter_api(
         self,
         prompt_ids: TensorType["batch_size", "seq_len"],
         candidates: List[int]
@@ -147,22 +141,44 @@ class DataGenerator:
             
             api_request_content = self.extract_api_request_content(pred, api_name=API_NAME)
             api_response = calculator_api(api_request_content)
-            api_response_with_arrow = torch.cat([self.api_output_token, self.tokenizer(api_response, return_tensors="pt")["input_ids"][0]], dim=0)
+            api_response_ids = self.tokenizer(api_response, return_tensors="pt")["input_ids"][0]
+            # Format: -> [api_response]
+            api_response_with_arrow_ids = torch.cat([self.api_output_token, api_response_ids], dim=0)
             
             api_syntax = self.extract_api_syntax(pred, api_name=API_NAME)
             api_syntax_ids = self.tokenizer(api_syntax, return_tensors="pt")["input_ids"][0]
-            api_syntax_with_response_ids = torch.cat([api_syntax_ids[:-1], api_response_with_arrow, api_syntax_ids[-1:]])
+            api_syntax_with_response_ids = torch.cat([api_syntax_ids[:-1], api_response_with_arrow_ids, api_syntax_ids[-1:]])
+            api_syntax_with_empty_response_ids = torch.cat([api_syntax_ids[:-1], self.api_output_token, api_syntax_ids[-1:]])
             
             api_start_idx = torch.where(pred_ids == self.api_start_token)[0]
             pred_exclude_api_ids = pred_ids[:api_start_idx]
             next_token_ids = pred_ids[api_start_idx + 1]
                         
-            prompt = torch.cat([api_syntax_with_response_ids, SPACE_TOKEN, pred_exclude_api_ids], dim=0)
-            N_PAD = MAX_PAD - prompt.shape[-1]
-            padded_prompt = F.pad(prompt, pad=(0, N_PAD), value=PAD_TOKEN)
+            promt_without_api = pred_exclude_api_ids
+            prompt_with_api_and_response = torch.cat([api_syntax_with_response_ids, SPACE_TOKEN, pred_exclude_api_ids], dim=0)
+            prompt_with_api_with_empty_response = torch.cat([api_syntax_with_empty_response_ids, SPACE_TOKEN, pred_exclude_api_ids], dim=0)
+            
+            padded_prompt_without_api = rearrange(
+                F.pad(promt_without_api, pad=(0, (MAX_PAD - promt_without_api.shape[-1])), value=PAD_TOKEN),
+                "... -> 1 ..."
+            )
+            padded_prompt_with_api_with_empty_response = rearrange(
+                F.pad(prompt_with_api_with_empty_response, pad=(0, (MAX_PAD - prompt_with_api_with_empty_response.shape[-1])), value=PAD_TOKEN),
+                "... -> 1 ..."
+            )
+            padded_prompt_with_api_and_response = rearrange(
+                F.pad(prompt_with_api_and_response, pad=(0, (MAX_PAD - prompt_with_api_and_response.shape[-1])), value=PAD_TOKEN),
+                "... -> 1 ..."
+            )
+            
+            padded_prompt = torch.cat([
+                padded_prompt_without_api,
+                padded_prompt_with_api_with_empty_response,
+                padded_prompt_with_api_and_response,
+            ], dim=0)
+            padded_prompt = rearrange(padded_prompt, "... -> 1 ...")
 
-            conditioning_prompts = torch.cat([conditioning_prompts, padded_prompt.unsqueeze(0)], dim=0).long()
-            # target_ids.append(next_token_ids)
+            conditioning_prompts = torch.cat([conditioning_prompts, padded_prompt], dim=0).long()
             target_ids = torch.cat([target_ids, torch.tensor(next_token_ids)], dim=0).long()
                     
         return target_ids, conditioning_prompts
@@ -175,14 +191,14 @@ class DataGenerator:
         # TODO: add support batch
         prompt = prompt_tempalte.format(input=text)
         prompt_ids = self.tokenizer(prompt, return_tensors="pt")["input_ids"][0]  
-        
-        # sampling
-        api_start_positions, generated_ids = self._sample_api_position(prompt_ids)
-        
-        # obtaining API calls
-        candidates = self._obtain_api_call(api_start_positions, generated_ids)
     
+        # sampling positions
+        api_start_idx, generated_ids = self.sample_api_position(prompt_ids)
+        
+        # obtaining api responses
+        candidates = self.obtain_api_response(api_start_idx, generated_ids)
+
         # filtering
-        target_ids, conditioning_prompts = self._filter_api(prompt_ids, candidates)
+        target_ids, conditioning_prompts = self.filter_api(prompt_ids, candidates)
         
         return target_ids, conditioning_prompts
