@@ -148,32 +148,14 @@ class DataGenerator:
         candidates = candidates[:, PROMPT_LENGTH:]
         
         return candidates
-
-    # def extract_pred_from_candidate(
-    #     candidate_ids: TensorType["seq_len"] # the initial prompting to guide the model + generated_ids
-    # ) -> TensorType["pred_len"]:
-    #     """Extract the generated ids from the [prompt + generated_ids].
-        
-    #     Example: Your task is to add two numbers. [PREDICTION].
-    #     Extracted ids: [PREDICTION].
-
-    #     Returns:
-    #         torch.Tensor: The ids of the prediction
-    #     """
-    #     pred_ids = candidate_ids[PROMPT_LENGTH:]
-    #     return pred_ids
     
     def _generate_conditioning_prompts(
         self,
-        prompt_ids: TensorType["batch_size", "seq_len"],
         candidate_ids: TensorType["batch_size", "n_candidates", "seq_len"],
     ):
         calculator_api = CalculatorAPI()
-        # conditioning_prompts = torch.tensor([])
         conditioning_api_ids = torch.tensor([])
-        target_ids = torch.tensor([])
 
-        SPACE_TOKEN = self.tokenizer(" .", return_tensors="pt")["input_ids"][0]
         API_NAME = "Calculator"
         MAX_PAD = 100
         PAD_TOKEN = self.tokenizer.pad_token_id
@@ -192,28 +174,7 @@ class DataGenerator:
             api_syntax_ids = self.tokenizer(api_syntax, return_tensors="pt")["input_ids"][0]
             api_syntax_with_response_ids = torch.cat([api_syntax_ids[:-1], api_response_with_arrow_ids, api_syntax_ids[-1:]])
             api_syntax_without_response_ids = torch.cat([api_syntax_ids[:-1], self.api_output_token, api_syntax_ids[-1:]])
-            
-            api_start_idx = torch.where(text_ids == self.api_start_token)[0]
-            pred_exclude_api_ids = text_ids[:api_start_idx]
-            next_token_ids = text_ids[api_start_idx + 1]
-                        
-            promt_without_api = pred_exclude_api_ids
-            # prompt_with_api_and_response = torch.cat([api_syntax_with_response_ids, SPACE_TOKEN, pred_exclude_api_ids], dim=0)
-            # prompt_with_api_with_empty_response = torch.cat([api_syntax_without_response_ids, SPACE_TOKEN, pred_exclude_api_ids], dim=0)
-            
-            # padded_prompt_without_api = rearrange(
-            #     F.pad(promt_without_api, pad=(0, (MAX_PAD - promt_without_api.shape[-1])), value=PAD_TOKEN),
-            #     "... -> 1 ..."
-            # )
-            # padded_prompt_with_api_with_empty_response = rearrange(
-            #     F.pad(prompt_with_api_with_empty_response, pad=(0, (MAX_PAD - prompt_with_api_with_empty_response.shape[-1])), value=PAD_TOKEN),
-            #     "... -> 1 ..."
-            # )
-            # padded_prompt_with_api_and_response = rearrange(
-            #     F.pad(prompt_with_api_and_response, pad=(0, (MAX_PAD - prompt_with_api_and_response.shape[-1])), value=PAD_TOKEN),
-            #     "... -> 1 ..."
-            # )
-            
+                              
             padded_api_without_response = rearrange(
                 F.pad(api_syntax_without_response_ids, pad=(0, (MAX_PAD - api_syntax_without_response_ids.shape[-1])), value=PAD_TOKEN),
                 "... -> 1 ..."
@@ -222,34 +183,23 @@ class DataGenerator:
                 F.pad(api_syntax_with_response_ids, pad=(0, (MAX_PAD - api_syntax_with_response_ids.shape[-1])), value=PAD_TOKEN),
                 "... -> 1 ..."
             )
-            
-            # padded_prompt = torch.cat([
-            #     padded_prompt_without_api,
-            #     padded_prompt_with_api_with_empty_response,
-            #     padded_prompt_with_api_and_response,
-            # ], dim=0)
-            
+        
             padded_api_call = torch.cat([
                 padded_api_without_response,
                 padded_api_with_response
             ], dim=0)
             padded_api_call = rearrange(padded_api_call, "... -> 1 ...")
             
-            # padded_prompt = rearrange(padded_prompt, "... -> 1 ...")
-
-            # conditioning_prompts = torch.cat([conditioning_prompts, padded_prompt], dim=0).long()
             conditioning_api_ids = torch.cat([conditioning_api_ids, padded_api_call], dim=0).long()
-            target_ids = torch.cat([target_ids, torch.tensor(next_token_ids)], dim=0).long()
                     
-        return target_ids, conditioning_api_ids
+        return conditioning_api_ids
 
     def filter_api( 
         self,
-        prompt_ids: TensorType["batch_size", "seq_len"],
         candiates: TensorType["batch_size", "n_positions", "seq_len"]
     ):
-        target_ids, conditioning_prompts = self._generate_conditioning_prompts(prompt_ids, candiates)
-        return target_ids, conditioning_prompts
+        conditioning_api_ids = self._generate_conditioning_prompts(candiates)
+        return conditioning_api_ids
     
     def generate(
         self,
@@ -267,6 +217,6 @@ class DataGenerator:
         candidates = self.obtain_api_response(prompt_ids, api_start_idx, generated_ids)
 
         # filtering
-        target_ids, conditioning_prompts = self.filter_api(prompt_ids, candidates)
-        
-        return api_start_idx, generated_ids, target_ids, conditioning_prompts
+        conditioning_api_ids = self.filter_api(candidates)
+                
+        return api_start_idx, generated_ids, conditioning_api_ids
