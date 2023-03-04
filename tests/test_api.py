@@ -7,9 +7,9 @@ from toolformer.api import CalculatorAPI
 @pytest.mark.parametrize(
     "input, expected",
     (
-        ["1 + 2", 3],
+        ["1 + 2", str(3)],
         ["2 / 0", ""],
-        ["(2 * 3) + 4", 10],
+        ["(2 * 3) + 4", str(10)],
     )
 )
 def test_execute_calculator_api(input, expected):
