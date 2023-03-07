@@ -29,7 +29,6 @@ def test_obtain_api_calls(data_generator, tokenizer):
     prompt_tempalte = PromptTemplate(template=calculator_prompt, input_variables=["input"])
     prompt_ids = tokenizer(prompt_tempalte.format(input=text), return_tensors="pt")["input_ids"][0]
 
-
     generated_text = "From this, we have 10 - 5 minutes = [Calculator(10 - 5)] 5 minutes."
     api_start_idxs = torch.tensor([1, 3, 5, 7, 9, 10])
     generated_ids = tokenizer(generated_text, return_tensors="pt")["input_ids"][0]
@@ -47,8 +46,7 @@ def test_filtering_api_call(default_config, model, tokenizer):
 
     filtered_candidate_ids = generator.generate(prompt_tempalte, text)
 
-    # assert isinstance(filtered_candidate_ids, [])
-    # assert filtered_candidate_ids.shape[1] == 2
+    assert isinstance(filtered_candidate_ids, list)
 
 def test_generate_data_generator(default_config, model, tokenizer):
     pass

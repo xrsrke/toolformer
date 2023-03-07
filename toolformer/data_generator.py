@@ -177,14 +177,6 @@ class DataGenerator:
             api_syntax_with_response_ids = torch.cat([api_syntax_ids[:-1], api_response_with_arrow_ids, api_syntax_ids[-1:]])
             api_syntax_without_response_ids = torch.cat([api_syntax_ids[:-1], self.api_output_token, api_syntax_ids[-1:]])
                               
-            # padded_api_without_response = rearrange(
-            #     F.pad(api_syntax_without_response_ids, pad=(0, (MAX_PAD - api_syntax_without_response_ids.shape[-1])), value=PAD_TOKEN),
-            #     "... -> 1 ..."
-            # )
-            # padded_api_with_response = rearrange(
-            #     F.pad(api_syntax_with_response_ids, pad=(0, (MAX_PAD - api_syntax_with_response_ids.shape[-1])), value=PAD_TOKEN),
-            #     "... -> 1 ..."
-            # )
             padded_api_without_response = rearrange(
                 F.pad(api_syntax_without_response_ids, pad=((MAX_PAD - api_syntax_without_response_ids.shape[-1]), 0), value=PAD_TOKEN),
                 "... -> 1 ..."
@@ -241,13 +233,13 @@ class DataGenerator:
             
         return losses
 
-    def filter_api_candidate_by_threshold(self, losses, candidates, threshold):
+    def filter_api_candidate_by_threshold(self, losses, candidates):
         filtered_augmented_text_ids = []
         for i, position in enumerate(losses):
             negative_loss = min(losses[position][0], losses[position][1])
             positive_loss = losses[position][2]
             
-            if negative_loss - positive_loss >= threshold:
+            if negative_loss - positive_loss >= self.filtering_threshold:
                 filtered_augmented_text_ids.append(candidates[i])
         
         return filtered_augmented_text_ids
@@ -281,7 +273,6 @@ class DataGenerator:
         ######
         
         MAX_PAD = 50
-        FILTER_THRESHOLD = 0.23
         PAD_TOKEN = self.pad_token_id
         SPACE_TOKEN = self.tokenizer(". ", return_tensors="pt")["input_ids"][0]
         API_LENGTH = 100
@@ -354,7 +345,7 @@ class DataGenerator:
         
         augmented_text_ids = self._calculate_weighted_loss(augmented_text_ids)
         losses = self._calculate_loss(augmented_text_ids)
-        filtered_candidate_ids = self.filter_api_candidate_by_threshold(losses, candidates, threshold=FILTER_THRESHOLD)
+        filtered_candidate_ids = self.filter_api_candidate_by_threshold(losses, candidates)
         
         return filtered_candidate_ids
     
