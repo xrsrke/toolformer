@@ -114,14 +114,13 @@ class DataGenerator:
     ) -> TensorType["batch_size", "n_positions", "seq_len"]:
         
         MAX_PAD = 50
-        PAD_TOKEN = self.tokenizer.pad_token_id
         
         # the ids before the start of an api call
         pre_api_ids = torch.tensor([])
 
         for position in positions:
             text_ids = torch.cat([generated_ids[:position], self.api_start_token], dim=0)
-            padded_text_ids = F.pad(text_ids, pad=(MAX_PAD - text_ids.shape[-1], 0), value=PAD_TOKEN)
+            padded_text_ids = F.pad(text_ids, pad=(MAX_PAD - text_ids.shape[-1], 0), value=self.pad_token_id)
             
             pre_api_ids = torch.cat([
                 pre_api_ids,
@@ -160,7 +159,6 @@ class DataGenerator:
 
         API_NAME = "Calculator"
         MAX_PAD = 100
-        PAD_TOKEN = self.tokenizer.pad_token_id
 
         for text_ids in candidate_ids:
             # the ids of the prediction
@@ -178,11 +176,11 @@ class DataGenerator:
             api_syntax_without_response_ids = torch.cat([api_syntax_ids[:-1], self.api_output_token, api_syntax_ids[-1:]])
                               
             padded_api_without_response = rearrange(
-                F.pad(api_syntax_without_response_ids, pad=((MAX_PAD - api_syntax_without_response_ids.shape[-1]), 0), value=PAD_TOKEN),
+                F.pad(api_syntax_without_response_ids, pad=((MAX_PAD - api_syntax_without_response_ids.shape[-1]), 0), value=self.pad_token_id),
                 "... -> 1 ..."
             )
             padded_api_with_response = rearrange(
-                F.pad(api_syntax_with_response_ids, pad=((MAX_PAD - api_syntax_with_response_ids.shape[-1]), 0), value=PAD_TOKEN),
+                F.pad(api_syntax_with_response_ids, pad=((MAX_PAD - api_syntax_with_response_ids.shape[-1]), 0), value=self.pad_token_id),
                 "... -> 1 ..."
             )
         
@@ -245,14 +243,11 @@ class DataGenerator:
         return filtered_augmented_text_ids
     
     def _convert_prompt_dict_to_list_input_ids(self, augmented_text_ids):
-        # input_ids = torch.tensor([])
         input_ids = []
         for _, api_start_position_dict in augmented_text_ids["api_start_positions"].items():
             for _, seq_position_dict in api_start_position_dict["seq_positions"].items():
                 for x in seq_position_dict["prompt_ids"]:
-                    # print(x.shape)
                     input_ids.append(x)
-                    # input_ids = torch.cat([input_ids, x.unsqueeze(0)], dim=0)
         return input_ids
     
     def _convert_prompt_dict_to_list_target_ids(self, augmented_text_ids):
@@ -269,11 +264,7 @@ class DataGenerator:
         candidates: TensorType["batch_size", "n_positions", "seq_len"]
     ):
         conditioning_api_ids = self._generate_conditioning_prompts(candidates)
-        
-        ######
-        
-        MAX_PAD = 50
-        PAD_TOKEN = self.pad_token_id
+                
         SPACE_TOKEN = self.tokenizer(". ", return_tensors="pt")["input_ids"][0]
         API_LENGTH = 100
         augmented_text_ids = {"api_start_positions": {}}
@@ -296,7 +287,7 @@ class DataGenerator:
                 # => generate_ids[:j]
                 conditioning_text_ids = text_ids[:j]
                 api_and_text_ids = torch.stack([
-                    F.pad(conditioning_text_ids, pad=(API_LENGTH + len(SPACE_TOKEN), 0), value=PAD_TOKEN), # [text_ids]
+                    F.pad(conditioning_text_ids, pad=(API_LENGTH + len(SPACE_TOKEN), 0), value=self.pad_token_id), # [text_ids]
                     torch.cat([api_ids[0], SPACE_TOKEN, conditioning_text_ids], dim=0), # [api->, text_ids]
                     torch.cat([api_ids[1], SPACE_TOKEN, conditioning_text_ids], dim=0), # [api->result, text_ids]
                 ], dim=0)
@@ -315,16 +306,12 @@ class DataGenerator:
         augmented_text_ids = self._normalize_weights(augmented_text_ids)
         input_ids = self._convert_prompt_dict_to_list_input_ids(augmented_text_ids)
         target_ids = self._convert_prompt_dict_to_list_target_ids(augmented_text_ids)
-        
-        # convert input_ids to tensor
-        MAX_PAD = 10
-        # input_ids = torch.tensor([[F.pad(x.long(), pad=(50-x.shape[-1], 0), value=PAD_TOKEN) for x in input_ids]])
 
         padded_input_ids = torch.tensor([])
         for x in input_ids:
             padded_input_ids = torch.cat([
                 padded_input_ids,
-                F.pad(x.long(), pad=(50-x.shape[-1], 0), value=PAD_TOKEN).unsqueeze(0)
+                F.pad(x.long(), pad=(50-x.shape[-1], 0), value=self.pad_token_id).unsqueeze(0)
             ], dim=0)
             
         output = self.model(input_ids=padded_input_ids.long())
