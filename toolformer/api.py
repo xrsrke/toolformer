@@ -4,14 +4,21 @@
 __all__ = ['BaseAPI', 'CalculatorAPI', 'WolframeAPI']
 
 # %% ../nbs/03_api.ipynb 4
-from typing import Callable
-
 from abc import abstractclassmethod
 
 import wolframalpha
+from langchain import PromptTemplate
 
 # %% ../nbs/03_api.ipynb 6
 class BaseAPI:
+    # def __init__(
+    #     self,
+    #     name: str,
+    #     prompt_template: PromptTemplate
+    # ):
+    #     self.name = name
+    #     self.prompt_template = prompt_template
+
     @abstractclassmethod
     def execute(self):
         pass

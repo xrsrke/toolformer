@@ -5,7 +5,7 @@ __all__ = ['DataGenerator']
 
 # %% ../nbs/04_data_generator.ipynb 4
 import re
-from typing import List, Callable, Tuple
+from typing import List, Callable, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -19,7 +19,7 @@ from .api import CalculatorAPI
 
 # %% ../nbs/04_data_generator.ipynb 5
 class DataGenerator:
-    def __init__(self, config: dict, model: Callable, tokenizer: Callable, apis: List[BaseAPI],):
+    def __init__(self, config: dict, model: Callable, tokenizer: Callable, apis: List[BaseAPI]):
         start_character = config["data_generator"]["api_start_character"]
         end_character = config["data_generator"]["api_end_character"]
         output_character = config["data_generator"]["api_output_character"]
@@ -36,7 +36,9 @@ class DataGenerator:
         self.apis = apis
         self.model = model
         self.tokenizer = tokenizer
+        
         # TODO: handle for cases that the sentence contains ".\n\n"
+        self.pad_token_id = tokenizer.pad_token_id
         self.eos_token_id = tokenizer(".\n\n")["input_ids"][0]
     
     def extract_api_request_content(self, text: str, api_name: str) -> str:
@@ -87,7 +89,7 @@ class DataGenerator:
                 
                 if self.api_start_token in top_k_tokens.indices:
                     # api_position = torch.tensor([len(generated_ids)]) # the current idx
-                    api_positions = torch.cat((api_positions, i), dim=0)
+                    api_positions = torch.cat([api_positions, i], dim=0)
                 
                 # sampling a token
                 # next_token = torch.multinomial(probs, num_samples=1)
@@ -167,7 +169,7 @@ class DataGenerator:
             api_request_content = self.extract_api_request_content(text, api_name=API_NAME)
             api_response = calculator_api(api_request_content)
             api_response_ids = self.tokenizer(api_response, return_tensors="pt")["input_ids"][0]
-            # Format: -> [api_response]
+            # Format: "-> [api_response]"
             api_response_with_arrow_ids = torch.cat([self.api_output_token, api_response_ids], dim=0)
             
             api_syntax = self.extract_api_syntax(text, api_name=API_NAME)
@@ -175,12 +177,20 @@ class DataGenerator:
             api_syntax_with_response_ids = torch.cat([api_syntax_ids[:-1], api_response_with_arrow_ids, api_syntax_ids[-1:]])
             api_syntax_without_response_ids = torch.cat([api_syntax_ids[:-1], self.api_output_token, api_syntax_ids[-1:]])
                               
+            # padded_api_without_response = rearrange(
+            #     F.pad(api_syntax_without_response_ids, pad=(0, (MAX_PAD - api_syntax_without_response_ids.shape[-1])), value=PAD_TOKEN),
+            #     "... -> 1 ..."
+            # )
+            # padded_api_with_response = rearrange(
+            #     F.pad(api_syntax_with_response_ids, pad=(0, (MAX_PAD - api_syntax_with_response_ids.shape[-1])), value=PAD_TOKEN),
+            #     "... -> 1 ..."
+            # )
             padded_api_without_response = rearrange(
-                F.pad(api_syntax_without_response_ids, pad=(0, (MAX_PAD - api_syntax_without_response_ids.shape[-1])), value=PAD_TOKEN),
+                F.pad(api_syntax_without_response_ids, pad=((MAX_PAD - api_syntax_without_response_ids.shape[-1]), 0), value=PAD_TOKEN),
                 "... -> 1 ..."
             )
             padded_api_with_response = rearrange(
-                F.pad(api_syntax_with_response_ids, pad=(0, (MAX_PAD - api_syntax_with_response_ids.shape[-1])), value=PAD_TOKEN),
+                F.pad(api_syntax_with_response_ids, pad=((MAX_PAD - api_syntax_with_response_ids.shape[-1]), 0), value=PAD_TOKEN),
                 "... -> 1 ..."
             )
         
@@ -194,29 +204,177 @@ class DataGenerator:
                     
         return conditioning_api_ids
 
+    def _compute_weight(self, t: int) -> Union[int, float]:
+        """Compute the weight in the loss function."""
+        return max(0, 1-0.2*t)
+
+    
+    def _normalize_weights(self, augmented_text_ids):
+        """Normalize the weight of each position in a sequence."""
+        for api_start_position in augmented_text_ids["api_start_positions"].values():
+            total_weight = sum([seq_position["unnormalized_weight"] for seq_position in api_start_position["seq_positions"].values()])
+            for seq_position in api_start_position["seq_positions"].values():
+                seq_position["normalized_weight"] = seq_position["unnormalized_weight"] / total_weight
+        
+        return augmented_text_ids
+    
+    def _calculate_weighted_loss(self, augmented_text_ids):
+        for position in augmented_text_ids["api_start_positions"]:        
+            seq_positions = augmented_text_ids["api_start_positions"][position]["seq_positions"]
+            for i in seq_positions:
+                losses = seq_positions[i]["losses"]
+                weights = seq_positions[i]["normalized_weight"]
+                seq_positions[i]["weighted_losses"] = -losses * weights
+        
+        return augmented_text_ids
+    
+    def _calculate_loss(self, augmented_text_ids):
+        losses = {}
+        for position in augmented_text_ids["api_start_positions"]:        
+            seq_positions = augmented_text_ids["api_start_positions"][position]["seq_positions"]
+            three_loss = [0, 0, 0]            
+            for i in seq_positions:
+                three_loss[0] += seq_positions[i]["weighted_losses"][0]
+                three_loss[1] += seq_positions[i]["weighted_losses"][1]
+                three_loss[2] += seq_positions[i]["weighted_losses"][2]
+            losses[position] = three_loss
+            
+        return losses
+
+    def filter_api_candidate_by_threshold(self, losses, candidates, threshold):
+        filtered_augmented_text_ids = []
+        for i, position in enumerate(losses):
+            negative_loss = min(losses[position][0], losses[position][1])
+            positive_loss = losses[position][2]
+            
+            if negative_loss - positive_loss >= threshold:
+                filtered_augmented_text_ids.append(candidates[i])
+        
+        return filtered_augmented_text_ids
+    
+    def _convert_prompt_dict_to_list_input_ids(self, augmented_text_ids):
+        # input_ids = torch.tensor([])
+        input_ids = []
+        for _, api_start_position_dict in augmented_text_ids["api_start_positions"].items():
+            for _, seq_position_dict in api_start_position_dict["seq_positions"].items():
+                for x in seq_position_dict["prompt_ids"]:
+                    # print(x.shape)
+                    input_ids.append(x)
+                    # input_ids = torch.cat([input_ids, x.unsqueeze(0)], dim=0)
+        return input_ids
+    
+    def _convert_prompt_dict_to_list_target_ids(self, augmented_text_ids):
+        target_ids = []
+        for _, api_start_position_dict in augmented_text_ids["api_start_positions"].items():
+            for _, seq_position_dict in api_start_position_dict["seq_positions"].items():
+                target_ids.append(seq_position_dict["target_ids"])
+        return target_ids
+
     def filter_api( 
         self,
-        candiates: TensorType["batch_size", "n_positions", "seq_len"]
+        text_ids,
+        api_start_idxs,
+        candidates: TensorType["batch_size", "n_positions", "seq_len"]
     ):
-        conditioning_api_ids = self._generate_conditioning_prompts(candiates)
-        return conditioning_api_ids
+        conditioning_api_ids = self._generate_conditioning_prompts(candidates)
+        
+        ######
+        
+        MAX_PAD = 50
+        FILTER_THRESHOLD = 0.23
+        PAD_TOKEN = self.pad_token_id
+        SPACE_TOKEN = self.tokenizer(". ", return_tensors="pt")["input_ids"][0]
+        API_LENGTH = 100
+        augmented_text_ids = {"api_start_positions": {}}
+        
+        for idx, api_ids in zip(api_start_idxs, conditioning_api_ids):
+            idx = idx.item()
+            seq_len = len(text_ids)
+            augmented_text_ids["api_start_positions"][idx] = {
+                "seq_positions": {}
+            }
+
+            j = idx
+            while j <= seq_len - 1:
+                # if the model predic
+                if j == 1:
+                    j += 1
+                    continue
+                
+                # in the formua, from x_1 to x_j (include x_j)
+                # => generate_ids[:j]
+                conditioning_text_ids = text_ids[:j]
+                api_and_text_ids = torch.stack([
+                    F.pad(conditioning_text_ids, pad=(API_LENGTH + len(SPACE_TOKEN), 0), value=PAD_TOKEN), # [text_ids]
+                    torch.cat([api_ids[0], SPACE_TOKEN, conditioning_text_ids], dim=0), # [api->, text_ids]
+                    torch.cat([api_ids[1], SPACE_TOKEN, conditioning_text_ids], dim=0), # [api->result, text_ids]
+                ], dim=0)
+                                
+                # api_and_text_ids = conditioning_api_ids[]
+                # the next token after x_j
+                next_token_ids = text_ids[j]
+                augmented_text_ids["api_start_positions"][idx]["seq_positions"][j] = {
+                    "prompt_ids": api_and_text_ids,
+                    "unnormalized_weight": self._compute_weight(t=j-idx),
+                    "losses": [],
+                    "target_ids": next_token_ids
+                }
+                j += 1
+        
+        augmented_text_ids = self._normalize_weights(augmented_text_ids)
+        input_ids = self._convert_prompt_dict_to_list_input_ids(augmented_text_ids)
+        target_ids = self._convert_prompt_dict_to_list_target_ids(augmented_text_ids)
+        
+        # convert input_ids to tensor
+        MAX_PAD = 10
+        # input_ids = torch.tensor([[F.pad(x.long(), pad=(50-x.shape[-1], 0), value=PAD_TOKEN) for x in input_ids]])
+
+        padded_input_ids = torch.tensor([])
+        for x in input_ids:
+            padded_input_ids = torch.cat([
+                padded_input_ids,
+                F.pad(x.long(), pad=(50-x.shape[-1], 0), value=PAD_TOKEN).unsqueeze(0)
+            ], dim=0)
+            
+        output = self.model(input_ids=padded_input_ids.long())
+        logits = output.logits[:, -1, :]
+        probs = F.softmax(logits, dim=-1)
+        
+        log_probs = torch.tensor([])
+
+        i = 0
+        for x in target_ids:
+            log_probs = torch.cat([log_probs, probs[i:i+3][:, x].log().unsqueeze(0)], dim=0)
+            i += 3
+            
+        for _, api_start_position_dict in augmented_text_ids["api_start_positions"].items():
+            for _, seq_position_dict in api_start_position_dict["seq_positions"].items():
+                seq_position_dict["losses"] = log_probs[:1].squeeze(0)
+                log_probs = log_probs[1:]
+        
+        augmented_text_ids = self._calculate_weighted_loss(augmented_text_ids)
+        losses = self._calculate_loss(augmented_text_ids)
+        filtered_candidate_ids = self.filter_api_candidate_by_threshold(losses, candidates, threshold=FILTER_THRESHOLD)
+        
+        return filtered_candidate_ids
     
     def generate(
         self,
         prompt_tempalte: PromptTemplate,
         text: str,
-    ) -> List[str]:
+    ) -> TensorType["batch_size", "seq_len"]:
         # TODO: add support batch
         prompt = prompt_tempalte.format(input=text)
-        prompt_ids = self.tokenizer(prompt, return_tensors="pt")["input_ids"][0]  
+        prompt_ids = self.tokenizer(prompt, return_tensors="pt")["input_ids"][0]
     
         # sampling positions
-        api_start_idx, generated_ids = self.sample_api_position(prompt_ids)
+        api_start_idxs, generated_ids = self.sample_api_position(prompt_ids)
         
         # obtaining api responses
-        candidates = self.obtain_api_response(prompt_ids, api_start_idx, generated_ids)
+        candidates = self.obtain_api_response(prompt_ids, api_start_idxs, generated_ids)
 
         # filtering
-        conditioning_api_ids = self.filter_api(candidates)
+        text_ids = self.tokenizer(text, return_tensors="pt")["input_ids"][0]
+        filtered_candidate_ids = self.filter_api(text_ids, api_start_idxs, candidates)
                 
-        return api_start_idx, generated_ids, conditioning_api_ids
+        return filtered_candidate_ids
