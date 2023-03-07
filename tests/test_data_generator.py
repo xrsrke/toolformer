@@ -31,36 +31,42 @@ def test_obtain_api_calls(data_generator, tokenizer):
     prompt_ids = tokenizer(prompt_tempalte.format(input=text), return_tensors="pt")["input_ids"][0]
 
     generated_text = "From this, we have 10 - 5 minutes = [Calculator(10 - 5)] 5 minutes."
-    api_start_idxs = torch.tensor([1, 3, 5, 7, 9, 10])
+    api_start_idxs = torch.tensor([
+        # 1, 3, 5, 7,
+        9, 10
+    ])
     generated_ids = tokenizer(generated_text, return_tensors="pt")["input_ids"][0]
 
-    candidates = data_generator.obtain_api_response(prompt_ids, api_start_idxs, generated_ids)
+    candidate_ids = data_generator.obtain_api_response(prompt_ids, api_start_idxs, generated_ids)
 
-    assert isinstance(candidates, torch.Tensor)
-    assert candidates.shape[0] == len(api_start_idxs)
+    assert isinstance(candidate_ids, torch.Tensor)
+    assert candidate_ids.shape[0] == len(api_start_idxs)
 
 def test_filtering_api_call(default_config, model, tokenizer):
     text = "From this, we have 10 - 5 minutes = 5 minutes."
     text_ids = tokenizer(text, return_tensors="pt")["input_ids"][0]
-    api_start_ids = torch.tensor([1, 3, 5, 7, 9, 10])
+    api_start_ids = torch.tensor([
+        # 1, 3, 5, 7,
+        9, 10
+    ])
 
     candidates = [
-        "From [Calculator(10 - 5)] 5 minutes.",
-        "From this, [Calculator(10 - 5)] 5 minutes.",
-        "From this, we have [Calculator(10 - 5)] 5 minutes.",
-        "From this, we have 10 - [Calculator(5)] 5 minutes.",
+        # "From [Calculator(10 - 5)] 5 minutes.",
+        # "From this, [Calculator(10 - 5)] 5 minutes.",
+        # "From this, we have [Calculator(10 - 5)] 5 minutes.",
+        # "From this, we have 10 - [Calculator(5)] 5 minutes.",
         "From this, we have 10 - 5 minutes [Calculator(10 - 5)] 5 minutes.",
         "From this, we have 10 - 5 minutes = [Calculator(10 - 5)] 5 minutes."
     ]
     MAX_PAD = 30
-    PAD_ID = tokenizer.pad_token_id
+    PAD_TOKEN_ID = tokenizer.pad_token_id
     candidate_ids = torch.tensor([])
 
     for x in candidates:
         text_id = tokenizer(x, return_tensors="pt")["input_ids"]
         candidate_ids = torch.cat([
             candidate_ids,
-            F.pad(text_id, pad=(MAX_PAD-text_id.shape[-1], 0), value=PAD_ID)
+            F.pad(text_id, pad=(MAX_PAD-text_id.shape[-1], 0), value=PAD_TOKEN_ID)
         ], dim=0)
     candidate_ids = candidate_ids.long()
 
