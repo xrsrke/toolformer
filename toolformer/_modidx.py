@@ -42,5 +42,6 @@ d = { 'settings': { 'branch': 'main',
                                                                                                             'toolformer/data_generator.py'),
                                            'toolformer.data_generator.DataGenerator.sample_api_position': ( 'data_generator.html#datagenerator.sample_api_position',
                                                                                                             'toolformer/data_generator.py')},
+            'toolformer.model': {'toolformer.model.Model': ('model.html#model', 'toolformer/model.py')},
             'toolformer.prompt': {},
             'toolformer.utils': {'toolformer.utils.yaml2dict': ('utils.html#yaml2dict', 'toolformer/utils.py')}}}

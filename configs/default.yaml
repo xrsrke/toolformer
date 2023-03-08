@@ -13,8 +13,8 @@ data_generator:
   api_end_character: "]"
   api_output_character: "→"
 
-  top_k: 4
-  sampling_threshold: 0.2
+  top_k_sampling: 3
+  sampling_threshold: 0.1
   filtering_threshold: 0.3
 
   max_new_tokens: 100

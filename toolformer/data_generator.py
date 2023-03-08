@@ -29,11 +29,11 @@ class DataGenerator:
         output_character = config["data_generator"]["api_output_character"]
         
         # add a space, because when the model generate a token, it's also include a "space"
-        self.api_start_token = tokenizer(f' {start_character}', return_tensors="pt")["input_ids"][0]
-        self.api_end_token = tokenizer(end_character, return_tensors="pt")["input_ids"][0]
-        self.api_output_token = tokenizer(f'{output_character}', return_tensors="pt")["input_ids"][0]
+        self.api_start_token_id = tokenizer(f' {start_character}', return_tensors="pt")["input_ids"][0]
+        self.api_end_token_id = tokenizer(end_character, return_tensors="pt")["input_ids"][0]
+        self.api_output_token_id = tokenizer(f'{output_character}', return_tensors="pt")["input_ids"][0]
         
-        self.top_k = config["data_generator"]["top_k"]
+        self.top_k_sampling = config["data_generator"]["top_k_sampling"]
         self.sampling_threshold = config["data_generator"]["sampling_threshold"]
         self.filtering_threshold = config["data_generator"]["filtering_threshold"]
         
@@ -46,6 +46,7 @@ class DataGenerator:
         self.eos_token_id = tokenizer(".\n\n")["input_ids"][0]
     
     def extract_api_request_content(self, text: str, api_name: str) -> str:
+        """Extract the content of an API request from a given text."""
         start_tag = f"{api_name}("
         end_tag = ")"
         start_idx = text.find(start_tag)
@@ -57,9 +58,10 @@ class DataGenerator:
             return None
         return text[start_idx:end_idx]
     
-    def extract_api_syntax(self, sentence: str, api_name: str) -> str:
+    def extract_api_syntax(self, text: str, api_name: str) -> str:
+        """Extract the API Syntax from a given text."""
         pattern = r"\[{}\(.*?\)\]".format(api_name)
-        matches = re.findall(pattern, sentence)
+        matches = re.findall(pattern, text)
         return matches
     
     def sample_api_position(
@@ -69,14 +71,16 @@ class DataGenerator:
         TensorType["batch_size", "n_positions"], # The positions of api call
         TensorType["batch_size", "seq_len"] # The generated text
     ]:
+        """Sampling API positions."""
         # TODO: add support batch
         
         # the ids of the prompt and generated_ids
         prompt_and_generated_ids = prompt_ids
         # only the ids of the generated_ids
         generated_ids = torch.tensor([])
-        api_positions = torch.tensor([])
         i = torch.tensor([0])
+        
+        api_pos_probs = torch.tensor([])
         
         with torch.no_grad():    
             while True:
@@ -86,13 +90,13 @@ class DataGenerator:
 
                 last_logit = logits[0, -1, :]
                 probs = torch.softmax(last_logit, dim=-1)
+                api_start_prob = probs[self.api_start_token_id]
                 
-                # find the top k tokens for api call
-                # TODO: add filter by larger than sampling_threshold
-                top_k_tokens = torch.topk(probs, k=5, dim=-1)
-                
-                if self.api_start_token in top_k_tokens.indices:
-                    api_positions = torch.cat([api_positions, i], dim=0)
+                if api_start_prob > self.sampling_threshold:
+                    api_pos_probs = torch.cat([
+                        api_pos_probs,
+                        torch.tensor([api_start_prob, i]).unsqueeze(0)
+                    ], dim=0)     
                 
                 # sampling a token
                 # next_token = torch.multinomial(probs, num_samples=1)
@@ -107,6 +111,10 @@ class DataGenerator:
                 else:
                     i += 1
         
+        _, indices = torch.sort(api_pos_probs[:, 0], descending=True)
+        top_k_sampling = self.top_k_sampling
+        api_positions = api_pos_probs[indices[:top_k_sampling], 1]
+                    
         return api_positions.long(), generated_ids.long()
 
     def obtain_api_response(
@@ -122,7 +130,7 @@ class DataGenerator:
         pre_api_ids = torch.tensor([])
 
         for position in positions:
-            text_ids = torch.cat([generated_ids[:position], self.api_start_token], dim=0)
+            text_ids = torch.cat([generated_ids[:position], self.api_start_token_id], dim=0)
             padded_text_ids = F.pad(text_ids, pad=(MAX_PAD - text_ids.shape[-1], 0), value=self.pad_token_id)
             
             pre_api_ids = torch.cat([
@@ -171,12 +179,12 @@ class DataGenerator:
             api_response = calculator_api(api_request_content)
             api_response_ids = self.tokenizer(api_response, return_tensors="pt")["input_ids"][0]
             # Format: "-> [api_response]"
-            api_response_with_arrow_ids = torch.cat([self.api_output_token, api_response_ids], dim=0)
+            api_response_with_arrow_ids = torch.cat([self.api_output_token_id, api_response_ids], dim=0)
             
             api_syntax = self.extract_api_syntax(text, api_name=API_NAME)
             api_syntax_ids = self.tokenizer(api_syntax, return_tensors="pt")["input_ids"][0]
             api_syntax_with_response_ids = torch.cat([api_syntax_ids[:-1], api_response_with_arrow_ids, api_syntax_ids[-1:]])
-            api_syntax_without_response_ids = torch.cat([api_syntax_ids[:-1], self.api_output_token, api_syntax_ids[-1:]])
+            api_syntax_without_response_ids = torch.cat([api_syntax_ids[:-1], self.api_output_token_id, api_syntax_ids[-1:]])
                               
             padded_api_without_response = rearrange(
                 F.pad(api_syntax_without_response_ids, pad=((MAX_PAD - api_syntax_without_response_ids.shape[-1]), 0), value=self.pad_token_id),
