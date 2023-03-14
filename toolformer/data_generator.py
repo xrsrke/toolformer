@@ -66,10 +66,10 @@ class DataGenerator:
     
     def sample_api_position(
         self,
-        prompt_ids: TensorType["batch_size", "seq_len"], # the ids of the prompt
+        prompt_ids: TensorType["seq_len"], # the ids of the prompt
     ) -> Tuple[
-        TensorType["batch_size", "n_positions"], # The positions of api call
-        TensorType["batch_size", "seq_len"] # The generated text
+        TensorType["n_positions"], # The positions of api call
+        TensorType["seq_len"] # The generated text
     ]:
         """Sampling API positions."""
         # TODO: add support batch
@@ -119,10 +119,10 @@ class DataGenerator:
 
     def obtain_api_response(
         self,
-        prompt_ids: TensorType["batch_size", "seq_len"],
-        positions: TensorType["batch_size", "n_positions"],
-        generated_ids: TensorType["batch_size", "seq_len"]
-    ) -> TensorType["batch_size", "n_positions", "seq_len"]:
+        prompt_ids: TensorType["seq_len"],
+        positions: TensorType["n_positions"],
+        generated_ids: TensorType["seq_len"]
+    ) -> TensorType["n_positions", "seq_len"]:
         
         MAX_PAD = 50
         
@@ -163,7 +163,7 @@ class DataGenerator:
     
     def _generate_conditioning_prompts(
         self,
-        candidate_ids: TensorType["batch_size", "n_candidates", "seq_len"],
+        candidate_ids: TensorType["n_candidates", "seq_len"],
     ):
         calculator_api = CalculatorAPI()
         conditioning_api_ids = torch.tensor([])
@@ -244,7 +244,7 @@ class DataGenerator:
     def _filter_candidate_by_threshold(
         self,
         losses,
-        candidates: TensorType["batch_size", "seq_len"]
+        candidates: TensorType["seq_len"]
     ):
         filtered_augmented_text_ids = []
         for i, position in enumerate(losses):
@@ -258,9 +258,9 @@ class DataGenerator:
 
     def filter_api( 
         self,
-        text_ids: TensorType["batch_size", "seq_len"],
-        api_start_idxs: TensorType["batch_size", "n_positions"],
-        candidate_ids: TensorType["batch_size", "n_positions", "seq_len"]
+        text_ids: TensorType["seq_len"],
+        api_start_idxs: TensorType["n_positions"],
+        candidate_ids: TensorType["n_positions", "seq_len"]
     ):
         conditioning_api_ids = self._generate_conditioning_prompts(candidate_ids)
                 
@@ -291,32 +291,32 @@ class DataGenerator:
                     torch.cat([api_ids[1], SPACE_TOKEN, conditioning_text_ids], dim=0), # [api->result, text_ids]
                 ], dim=0)
                                 
-                # api_and_text_ids = conditioning_api_ids[]
                 # the next token after x_j
                 next_token_ids = text_ids[j]
                 augmented_text_ids["api_start_positions"][idx]["seq_positions"][j] = {
                     "prompt_ids": api_and_text_ids,
                     "unnormalized_weight": self._compute_weight(t=j-idx),
                     "losses": [],
-                    "target_ids": next_token_ids
+                    "target_ids": torch.tensor([next_token_ids, next_token_ids, next_token_ids])
                 }
                 j += 1
         
         augmented_text_ids = self._normalize_weights(augmented_text_ids)
-        
+                
         def extract_conditioning_ids_and_target_ids(augmented_text_ids):
             conditioning_text_ids = torch.tensor([])
-            target_ids = []
+            target_ids = torch.tensor([])
+            
             for _, api_start_position_dict in augmented_text_ids["api_start_positions"].items():
                 for _, seq_position_dict in api_start_position_dict["seq_positions"].items():
-                    target_ids.append(seq_position_dict["target_ids"])
+                    target_ids = torch.concat([target_ids, seq_position_dict["target_ids"]], dim=0)
                     for prompt_id in seq_position_dict["prompt_ids"]:
                         conditioning_text_ids = torch.cat([
                             conditioning_text_ids,
                             F.pad(prompt_id.long(), pad=(50-prompt_id.shape[-1], 0), value=self.pad_token_id).unsqueeze(0)
                         ], dim=0)
         
-            return conditioning_text_ids, target_ids
+            return conditioning_text_ids.long(), target_ids.long()
 
         conditioning_text_ids, target_ids = extract_conditioning_ids_and_target_ids(augmented_text_ids)
             
@@ -324,20 +324,16 @@ class DataGenerator:
         logits = output.logits[:, -1, :]
                     
         def extract_target_logprob_from_logits(logits, target_ids):
-            probs = F.softmax(logits, dim=-1)
-            i = 0
-            log_probs = torch.tensor([])
-            for x in target_ids:
-                log_probs = torch.cat([log_probs, probs[i:i+3][:, x].log().unsqueeze(0)], dim=0)
-                i += 3
-            return log_probs
+            log_probs = F.log_softmax(logits, dim=-1)
+            target_log_probs = log_probs[range(target_ids.shape[-1]), target_ids]
+            return target_log_probs
 
         log_probs = extract_target_logprob_from_logits(logits, target_ids)
             
         for _, api_start_position_dict in augmented_text_ids["api_start_positions"].items():
             for _, seq_position_dict in api_start_position_dict["seq_positions"].items():
-                seq_position_dict["losses"] = log_probs[:1].squeeze(0)
-                log_probs = log_probs[1:]
+                seq_position_dict["losses"] = log_probs[:3].squeeze(0)
+                log_probs = log_probs[3:]
         
         augmented_text_ids = self._calculate_weighted_loss(augmented_text_ids)
         losses = self._calculate_loss(augmented_text_ids)
@@ -348,7 +344,7 @@ class DataGenerator:
         self,
         prompt_tempalte: PromptTemplate,
         text: str,
-    ) -> TensorType["batch_size", "n_candidates", "seq_len"]:
+    ) -> TensorType["n_candidates", "seq_len"]:
         # TODO: add support batch
         prompt = prompt_tempalte.format(input=text)
         prompt_ids = self.tokenizer(prompt, return_tensors="pt")["input_ids"][0]
@@ -361,6 +357,8 @@ class DataGenerator:
 
         # filtering
         text_ids = self.tokenizer(text, return_tensors="pt")["input_ids"][0]
+        
+        # return prompt_ids, api_start_idxs, generated_ids, candidate_ids, text_ids
         filtered_candidate_ids = self.filter_api(text_ids, api_start_idxs, candidate_ids)
                 
         return filtered_candidate_ids
