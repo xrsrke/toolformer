@@ -85,8 +85,8 @@ def test_generate_data_generator(default_config, model, tokenizer, apis):
 
     generator = DataGenerator(default_config, model, tokenizer, apis=apis)
 
-    filtered_candidate_ids = generator.generate(text)
+    augumented_text_ids = generator.generate(text)
 
-    assert filtered_candidate_ids.shape[0] == len(apis)
-    assert filtered_candidate_ids.ndim == 3
-    assert isinstance(filtered_candidate_ids, torch.Tensor)
+    assert augumented_text_ids.shape[0] == len(apis)
+    assert augumented_text_ids.ndim == 3
+    assert isinstance(augumented_text_ids, torch.Tensor)
