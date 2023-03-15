@@ -11,13 +11,17 @@ from langchain import PromptTemplate
 
 # %% ../nbs/03_api.ipynb 6
 class BaseAPI:
-    # def __init__(
-    #     self,
-    #     name: str,
-    #     prompt_template: PromptTemplate
-    # ):
-    #     self.name = name
-    #     self.prompt_template = prompt_template
+    def __init__(
+        self,
+        name: str, # the name of the API call
+        prompt_template: PromptTemplate,
+        sampling_threshold: float = 0.2,
+        filtering_threshold: float = 0.2,
+    ):
+        self.name = name
+        self.prompt_template = prompt_template
+        self.sampling_threshold = sampling_threshold
+        self.filtering_threshold = filtering_threshold
 
     @abstractclassmethod
     def execute(self):

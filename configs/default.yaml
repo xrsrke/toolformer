@@ -15,7 +15,7 @@ data_generator:
 
   top_k_sampling: 3
   sampling_threshold: 0.1
-  filtering_threshold: 0.2
+  filtering_threshold: 0.05
 
   max_new_tokens: 100
 

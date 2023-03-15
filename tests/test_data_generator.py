@@ -1,16 +1,12 @@
+import pytest
+
 import torch
 import torch.nn.functional as F
 from langchain import PromptTemplate
 
 from toolformer.data_generator import DataGenerator
-from toolformer.prompt import calculator_prompt
-
-def test_create_data_generator(default_config):
-    # model = AutoModelForCausalLM.from_pretrained(default_config['model']['path'])
-    # tokenizer = AutoTokenizer.from_pretrained(default_config['tokenizer']['path'])
-
-    # generator = DataGenerator(default_config, model, tokenizer, apis=[])
-    pass
+from toolformer.api import CalculatorAPI, WolframeAPI
+from toolformer.prompt import calculator_prompt, wolframe_prompt
 
 def test_sampling_apis_call(
     data_generator, prompt_tempalte,
@@ -76,12 +72,21 @@ def test_filtering_api_call(default_config, model, tokenizer):
 
     assert isinstance(filtered_candidate_ids, list)
 
-def test_generate_data_generator(default_config, model, tokenizer):
-    text = "From this, we have 10 - 5 minutes = 5 minutes."
-    prompt_tempalte = PromptTemplate(template=calculator_prompt, input_variables=["input"])
+calculator_api = CalculatorAPI("Calculator", calculator_prompt)
+wolframe_api = WolframeAPI("Wolframe", wolframe_prompt)
 
-    generator = DataGenerator(default_config, model, tokenizer, apis=[])
+@pytest.mark.parametrize("apis", [
+    [calculator_api],
+    [wolframe_api],
+    [calculator_api, wolframe_api],
+])
+def test_generate_data_generator(default_config, model, tokenizer, apis):
+    text = "From this, we have 10 - 5 minutes [Calculator(10 - 5)] 5 minutes."
 
-    filtered_candidate_ids = generator.generate(prompt_tempalte, text)
+    generator = DataGenerator(default_config, model, tokenizer, apis=apis)
 
-    assert isinstance(filtered_candidate_ids, list)
+    filtered_candidate_ids = generator.generate(text)
+
+    assert filtered_candidate_ids.shape[0] == len(apis)
+    assert filtered_candidate_ids.ndim == 3
+    assert isinstance(filtered_candidate_ids, torch.Tensor)

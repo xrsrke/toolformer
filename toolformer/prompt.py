@@ -43,17 +43,17 @@ Output:
 
 # %% ../nbs/02_prompt.ipynb 9
 wolframe_prompt = """
-Your task is to add calls to a Scientific API to a piece of text. The questions should help you get information required to complete the text.
+Your task is to add calls to a Scientific API to a piece of text that related to chemistry, math, physics. The questions should help you get information required to complete the text.
 You can call the API by writing "[Wolframe(question)]" where "question" is the question you want to ask. Here are some examples of API calls:
-
-Input: Joe Biden was born in Scranton, Pennsylvania
-Output: Joe Biden was born in [Wolframe("Where was Joe Biden born?")] Scranton, [Wolframe("In which state is Scranton?")] Pennsylvania.
 
 Input: The complex conjugate of 2 + 3i is 2 - 3i.
 Output: The complex conjugate of 2 + 3i is [Wolframe("What is the complex conjugate of 2 - 3i")] 2 - 3i.
 
 Input: Solve x^2 + 4x + 6 = 0. The answer is x = -2 - i sqrt(2)
 Output: Solve x^2 + 4x + 6 = 0. The answer is [Wolframe("Solve x^2 + 4x + 6 = 0")] x = -2 - i sqrt(2)
+
+Input: Given a sequence of numbers: 21.3, 38.4, 12.7, 41.6. The mean is 28.5
+Output: Given a sequence of numbers: 21.3, 38.4, 12.7, 41.6. The mean is [Wolframe("What is the mean of 21.3, 38.4, 12.7, 41.6")] 28.5
 
 Input: {input}
 Output:

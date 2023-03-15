@@ -111,9 +111,12 @@ class DataGenerator:
                 else:
                     i += 1
         
-        _, indices = torch.sort(api_pos_probs[:, 0], descending=True)
-        top_k_sampling = self.top_k_sampling
-        api_positions = api_pos_probs[indices[:top_k_sampling], 1]
+        if api_pos_probs.numel() == 0:
+            api_positions = torch.tensor([])
+        else:
+            _, indices = torch.sort(api_pos_probs[:, 0], descending=True)
+            top_k_sampling = self.top_k_sampling
+            api_positions = api_pos_probs[indices[:top_k_sampling], 1]
                     
         return api_positions.long(), generated_ids.long()
 
@@ -163,12 +166,12 @@ class DataGenerator:
     
     def _generate_conditioning_prompts(
         self,
+        api: BaseAPI,
         candidate_ids: TensorType["n_candidates", "seq_len"],
     ):
-        calculator_api = CalculatorAPI()
         conditioning_api_ids = torch.tensor([])
 
-        API_NAME = "Calculator"
+        API_NAME = api.name
         MAX_PAD = 100
 
         for text_ids in candidate_ids:
@@ -176,7 +179,7 @@ class DataGenerator:
             text = self.tokenizer.decode(text_ids, skip_special_tokens=True)
             
             api_request_content = self.extract_api_request_content(text, api_name=API_NAME)
-            api_response = calculator_api(api_request_content)
+            api_response = api(api_request_content)
             api_response_ids = self.tokenizer(api_response, return_tensors="pt")["input_ids"][0]
             # Format: "-> [api_response]"
             api_response_with_arrow_ids = torch.cat([self.api_output_token_id, api_response_ids], dim=0)
@@ -246,23 +249,28 @@ class DataGenerator:
         losses,
         candidates: TensorType["seq_len"]
     ):
-        filtered_augmented_text_ids = []
+        filtered_augmented_text_ids = torch.tensor([])
         for i, position in enumerate(losses):
             negative_loss = min(losses[position][0], losses[position][1])
             positive_loss = losses[position][2]
             
             if negative_loss - positive_loss >= self.filtering_threshold:
-                filtered_augmented_text_ids.append(candidates[i])
+                # filtered_augmented_text_ids.append(candidates[i])
+                filtered_augmented_text_ids = torch.cat([
+                    filtered_augmented_text_ids,
+                    candidates[i].unsqueeze(0)
+                ], dim=0)
         
-        return filtered_augmented_text_ids
+        return filtered_augmented_text_ids.long()
 
     def filter_api( 
         self,
+        api: BaseAPI,
         text_ids: TensorType["seq_len"],
         api_start_idxs: TensorType["n_positions"],
         candidate_ids: TensorType["n_positions", "seq_len"]
     ):
-        conditioning_api_ids = self._generate_conditioning_prompts(candidate_ids)
+        conditioning_api_ids = self._generate_conditioning_prompts(api, candidate_ids)
                 
         SPACE_TOKEN = self.tokenizer(". ", return_tensors="pt")["input_ids"][0]
         API_LENGTH = 100
@@ -342,23 +350,27 @@ class DataGenerator:
     
     def generate(
         self,
-        prompt_tempalte: PromptTemplate,
         text: str,
-    ) -> TensorType["n_candidates", "seq_len"]:
-        # TODO: add support batch
-        prompt = prompt_tempalte.format(input=text)
-        prompt_ids = self.tokenizer(prompt, return_tensors="pt")["input_ids"][0]
-    
-        # sampling positions
-        api_start_idxs, generated_ids = self.sample_api_position(prompt_ids)
+    ) -> TensorType["n_apis", "n_candidates", "seq_len"]:
+        filtered_apis = torch.tensor([])
         
-        # obtaining api responses
-        candidate_ids = self.obtain_api_response(prompt_ids, api_start_idxs, generated_ids)
+        for api in self.apis:
+            # TODO: add support batch
+            prompt = api.prompt_template.format(input=text)
+            prompt_ids = self.tokenizer(prompt, return_tensors="pt")["input_ids"][0]
+        
+            # sampling positions
+            api_start_idxs, generated_ids = self.sample_api_position(prompt_ids)
+            
+            # obtaining api responses
+            candidate_ids = self.obtain_api_response(prompt_ids, api_start_idxs, generated_ids)
 
-        # filtering
-        text_ids = self.tokenizer(text, return_tensors="pt")["input_ids"][0]
+            # filtering
+            text_ids = self.tokenizer(text, return_tensors="pt")["input_ids"][0]
+            
+            # return prompt_ids, api_start_idxs, generated_ids, candidate_ids, text_ids
+            filtered_candidate_ids = self.filter_api(api, text_ids, api_start_idxs, candidate_ids)
+                    
+            filtered_apis = torch.cat([filtered_apis, filtered_candidate_ids.unsqueeze(0)], dim=0)
         
-        # return prompt_ids, api_start_idxs, generated_ids, candidate_ids, text_ids
-        filtered_candidate_ids = self.filter_api(text_ids, api_start_idxs, candidate_ids)
-                
-        return filtered_candidate_ids
+        return filtered_apis.long()
