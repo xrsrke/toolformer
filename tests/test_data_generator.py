@@ -81,7 +81,7 @@ wolframe_api = WolframeAPI("Wolframe", wolframe_prompt)
     [calculator_api, wolframe_api],
 ])
 def test_generate_data_generator(default_config, model, tokenizer, apis):
-    text = "From this, we have 10 - 5 minutes [Calculator(10 - 5)] 5 minutes."
+    text = "From this, we have 10 - 5 minutes = 5 minutes."
 
     generator = DataGenerator(default_config, model, tokenizer, apis=apis)
 

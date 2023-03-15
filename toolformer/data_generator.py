@@ -12,10 +12,8 @@ import torch.nn.functional as F
 
 from torchtyping import TensorType
 from einops import rearrange
-from langchain import PromptTemplate
 
 from .api import BaseAPI
-from .api import CalculatorAPI
 
 # %% ../nbs/04_data_generator.ipynb 5
 class AugmentedCandidate(TypedDict):
