@@ -20,3 +20,6 @@ data_generator:
   max_new_tokens: 100
 
   n_api_pad: 100
+
+inference:
+  top_k: 5
