@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from toolformer.api import CalculatorAPI, WolframeAPI
@@ -22,7 +24,8 @@ def test_execute_calculator_api(input, expected):
     assert isinstance(output, str)
 
 def test_execute_wolframe_api():
-    wolframe_api = WolframeAPI("Wolframe", wolframe_prompt)
+    WOLFRAME_API_KEY = os.environ.get('WOLFRAME_API_KEY')
+    wolframe_api = WolframeAPI("Wolframe", wolframe_prompt, api_key=WOLFRAME_API_KEY)
 
     input = "integrate x^2 sin^3 x dx"
     output = wolframe_api(input)

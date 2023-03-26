@@ -41,7 +41,11 @@ class CalculatorAPI(BaseAPI):
 
 # %% ../nbs/03_api.ipynb 10
 class WolframeAPI(BaseAPI):
+    def __init__(self, *args, api_key: str, **kargs):
+        super().__init__(*args, **kargs)
+        self.api_key = api_key
+        
     def execute(self, input: str) -> str:
-        client = wolframalpha.Client("JRAVAT-6WRE9VGWR5")
+        client = wolframalpha.Client(self.api_key)
         res = client.query(input=input)
         return next(res.results).text
