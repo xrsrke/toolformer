@@ -1,4 +1,5 @@
 import pytest
+import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from langchain import PromptTemplate
 
@@ -24,4 +25,5 @@ def prompt_tempalte():
 
 @pytest.fixture
 def data_generator(default_config, model, tokenizer):
-    return DataGenerator(default_config, model, tokenizer, apis=[])
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return DataGenerator(default_config, model, tokenizer, apis=[]).to(device)

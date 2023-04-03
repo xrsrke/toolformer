@@ -8,6 +8,7 @@ import re
 from typing import List, Callable, Tuple, Union, TypedDict
 
 import torch
+from torch import nn
 import torch.nn.functional as F
 
 from torchtyping import TensorType
@@ -20,8 +21,15 @@ class AugmentedCandidate(TypedDict):
     api_start_positions: int
 
 # %% ../nbs/04_data_generator.ipynb 6
-class DataGenerator:
-    def __init__(self, config: dict, model: Callable, tokenizer: Callable, apis: List[BaseAPI]):
+class DataGenerator(nn.Module):
+    def __init__(
+        self,
+        config: dict,
+        model: Callable, tokenizer: Callable,
+        apis: List[BaseAPI],
+        device: str = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ):
+        super().__init__()
         start_character = config["data_generator"]["api_start_character"]
         end_character = config["data_generator"]["api_end_character"]
         output_character = config["data_generator"]["api_output_character"]
@@ -36,31 +44,13 @@ class DataGenerator:
         self.filtering_threshold = config["data_generator"]["filtering_threshold"]
         
         self.apis = apis
-        self.model = model
+        self.model = model.to(device)
         self.tokenizer = tokenizer
+        self.device = device
         
         # TODO: handle for cases that the sentence contains ".\n\n"
         self.pad_token_id = tokenizer.pad_token_id
         self.eos_token_id = tokenizer(".\n\n")["input_ids"][0]
-    
-    def extract_api_request_content(self, text: str, api_name: str) -> str:
-        """Extract the content of an API request from a given text."""
-        start_tag = f"{api_name}("
-        end_tag = ")"
-        start_idx = text.find(start_tag)
-        if start_idx == -1:
-            return None
-        start_idx += len(start_tag)
-        end_idx = text.find(end_tag, start_idx)
-        if end_idx == -1:
-            return None
-        return text[start_idx:end_idx]
-    
-    def extract_api_syntax(self, text: str, api_name: str) -> str:
-        """Extract the API Syntax from a given text."""
-        pattern = r"\[{}\(.*?\)\]".format(api_name)
-        matches = re.findall(pattern, text)
-        return matches
     
     def sample_api_position(
         self,
@@ -71,12 +61,11 @@ class DataGenerator:
     ]:
         """Sampling API positions."""
         # TODO: add support batch
-        
         # the ids of the prompt and generated_ids
         prompt_and_generated_ids = prompt_ids
         # only the ids of the generated_ids
-        generated_ids = torch.tensor([])
-        i = torch.tensor([0])
+        generated_ids = torch.tensor([]).to(self.device)
+        i = torch.tensor([0]).to(self.device)
         
         api_pos_probs = torch.tensor([])
         
@@ -171,18 +160,37 @@ class DataGenerator:
 
         API_NAME = api.name
         MAX_PAD = 100
+        
+        def extract_api_request_content(text: str, api_name: str) -> str:
+            """Extract the content of an API request from a given text."""
+            start_tag = f"{api_name}("
+            end_tag = ")"
+            start_idx = text.find(start_tag)
+            if start_idx == -1:
+                return None
+            start_idx += len(start_tag)
+            end_idx = text.find(end_tag, start_idx)
+            if end_idx == -1:
+                return None
+            return text[start_idx:end_idx]
+        
+        def extract_api_syntax(text: str, api_name: str) -> str:
+            """Extract the API Syntax from a given text."""
+            pattern = r"\[{}\(.*?\)\]".format(api_name)
+            matches = re.findall(pattern, text)
+            return matches
 
         for text_ids in candidate_ids:
             # the ids of the prediction
             text = self.tokenizer.decode(text_ids, skip_special_tokens=True)
             
-            api_request_content = self.extract_api_request_content(text, api_name=API_NAME)
+            api_request_content = extract_api_request_content(text, api_name=API_NAME)
             api_response = api(api_request_content)
             api_response_ids = self.tokenizer(api_response, return_tensors="pt")["input_ids"][0]
             # Format: "-> [api_response]"
             api_response_with_arrow_ids = torch.cat([self.api_output_token_id, api_response_ids], dim=0)
             
-            api_syntax = self.extract_api_syntax(text, api_name=API_NAME)
+            api_syntax = extract_api_syntax(text, api_name=API_NAME)
             api_syntax_ids = self.tokenizer(api_syntax, return_tensors="pt")["input_ids"][0]
             api_syntax_with_response_ids = torch.cat([api_syntax_ids[:-1], api_response_with_arrow_ids, api_syntax_ids[-1:]])
             api_syntax_without_response_ids = torch.cat([api_syntax_ids[:-1], self.api_output_token_id, api_syntax_ids[-1:]])
@@ -205,42 +213,6 @@ class DataGenerator:
             conditioning_api_ids = torch.cat([conditioning_api_ids, padded_api_call], dim=0).long()
                     
         return conditioning_api_ids
-
-    def _compute_weight(self, t: int) -> Union[int, float]:
-        """Compute the weight in the loss function."""
-        return max(0, 1-0.2*t)
-    
-    def _normalize_weights(self, augmented_text_ids):
-        """Normalize the weight of each position in a sequence."""
-        for api_start_position in augmented_text_ids["api_start_positions"].values():
-            total_weight = sum([seq_position["unnormalized_weight"] for seq_position in api_start_position["seq_positions"].values()])
-            for seq_position in api_start_position["seq_positions"].values():
-                seq_position["normalized_weight"] = seq_position["unnormalized_weight"] / total_weight
-        
-        return augmented_text_ids
-    
-    def _calculate_weighted_loss(self, augmented_text_ids):
-        for position in augmented_text_ids["api_start_positions"]:        
-            seq_positions = augmented_text_ids["api_start_positions"][position]["seq_positions"]
-            for i in seq_positions:
-                losses = seq_positions[i]["losses"]
-                weights = seq_positions[i]["normalized_weight"]
-                seq_positions[i]["weighted_losses"] = -losses * weights
-        
-        return augmented_text_ids
-    
-    def _calculate_loss(self, augmented_text_ids):
-        data = {}
-        for position in augmented_text_ids["api_start_positions"]:        
-            seq_positions = augmented_text_ids["api_start_positions"][position]["seq_positions"]
-            losses = [0, 0, 0]            
-            for i in seq_positions:
-                losses[0] += seq_positions[i]["weighted_losses"][0] # loss for [text]
-                losses[1] += seq_positions[i]["weighted_losses"][1] # loss for [api->, text]
-                losses[2] += seq_positions[i]["weighted_losses"][2] # loss for [api-result, text]
-            data[position] = losses
-            
-        return data
 
     def _filter_candidate_by_threshold(
         self,
@@ -274,6 +246,10 @@ class DataGenerator:
         API_LENGTH = 100
         augmented_text_ids = {"api_start_positions": {}}
         
+        def _compute_weight(t: int) -> Union[int, float]:
+            """Compute the weight in the loss function."""
+            return max(0, 1-0.2*t)
+        
         for idx, api_ids in zip(api_start_idxs, conditioning_api_ids):
             idx = idx.item()
             seq_len = len(text_ids)
@@ -301,13 +277,22 @@ class DataGenerator:
                 next_token_ids = text_ids[j]
                 augmented_text_ids["api_start_positions"][idx]["seq_positions"][j] = {
                     "prompt_ids": api_and_text_ids,
-                    "unnormalized_weight": self._compute_weight(t=j-idx),
+                    "unnormalized_weight": _compute_weight(t=j-idx),
                     "losses": [],
                     "target_ids": torch.tensor([next_token_ids, next_token_ids, next_token_ids])
                 }
                 j += 1
         
-        augmented_text_ids = self._normalize_weights(augmented_text_ids)
+        def _normalize_weights(augmented_text_ids):
+            """Normalize the weight of each position in a sequence."""
+            for api_start_position in augmented_text_ids["api_start_positions"].values():
+                total_weight = sum([seq_position["unnormalized_weight"] for seq_position in api_start_position["seq_positions"].values()])
+                for seq_position in api_start_position["seq_positions"].values():
+                    seq_position["normalized_weight"] = seq_position["unnormalized_weight"] / total_weight
+            
+            return augmented_text_ids
+        
+        augmented_text_ids = _normalize_weights(augmented_text_ids)
                 
         def extract_conditioning_ids_and_target_ids(augmented_text_ids):
             conditioning_text_ids = torch.tensor([])
@@ -341,8 +326,32 @@ class DataGenerator:
                 seq_position_dict["losses"] = log_probs[:3].squeeze(0)
                 log_probs = log_probs[3:]
         
-        augmented_text_ids = self._calculate_weighted_loss(augmented_text_ids)
-        losses = self._calculate_loss(augmented_text_ids)
+        def _calculate_weighted_loss(augmented_text_ids):
+            for position in augmented_text_ids["api_start_positions"]:        
+                seq_positions = augmented_text_ids["api_start_positions"][position]["seq_positions"]
+                for i in seq_positions:
+                    losses = seq_positions[i]["losses"]
+                    weights = seq_positions[i]["normalized_weight"]
+                    seq_positions[i]["weighted_losses"] = -losses * weights
+            
+            return augmented_text_ids
+        
+        augmented_text_ids = _calculate_weighted_loss(augmented_text_ids)
+        
+        def _calculate_loss(augmented_text_ids):
+            data = {}
+            for position in augmented_text_ids["api_start_positions"]:        
+                seq_positions = augmented_text_ids["api_start_positions"][position]["seq_positions"]
+                losses = [0, 0, 0]            
+                for i in seq_positions:
+                    losses[0] += seq_positions[i]["weighted_losses"][0] # loss for [text]
+                    losses[1] += seq_positions[i]["weighted_losses"][1] # loss for [api->, text]
+                    losses[2] += seq_positions[i]["weighted_losses"][2] # loss for [api-result, text]
+                data[position] = losses
+                
+            return data
+        
+        losses = _calculate_loss(augmented_text_ids)
         filtered_candidate_ids = self._filter_candidate_by_threshold(losses, candidate_ids)
         return filtered_candidate_ids
     

@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 import torch
@@ -7,6 +9,8 @@ from langchain import PromptTemplate
 from toolformer.data_generator import DataGenerator
 from toolformer.api import CalculatorAPI, WolframeAPI
 from toolformer.prompt import calculator_prompt, wolframe_prompt
+
+WOLFRAME_API_KEY = os.environ.get('WOLFRAME_API_KEY')
 
 def test_sampling_apis_call(
     data_generator, prompt_tempalte,
@@ -75,7 +79,7 @@ def test_filtering_api_call(default_config, model, tokenizer):
     assert isinstance(filtered_candidate_ids, torch.Tensor)
 
 calculator_api = CalculatorAPI("Calculator", calculator_prompt)
-wolframe_api = WolframeAPI("Wolframe", wolframe_prompt)
+wolframe_api = WolframeAPI("Wolframe", wolframe_prompt, api_key=WOLFRAME_API_KEY)
 
 @pytest.mark.parametrize("apis", [
     [calculator_api],
