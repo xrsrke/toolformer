@@ -12,7 +12,7 @@ Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.
 <!-- [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![docs](https://img.shields.io/github/deployments/vwxyzjn/cleanrl/Production?label=docs&logo=vercel)](https://xrsrke.github.io/instructGOOSE/) -->
 
-![image.png](index_files/figure-commonmark/e5f7b2fa-1-image.png)
+![image.png](index_files/figure-commonmark/08f39f23-1-image.png)
 
 Paper: [Toolformer: Language Models Can Teach Themselves to Use
 Tools](https://arxiv.org/abs/2302.04761)

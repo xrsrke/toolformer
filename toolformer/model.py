@@ -12,11 +12,12 @@ import torch.nn.functional as F
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from torchtyping import TensorType
+from einops import rearrange
 
 from .api import BaseAPI
-from .utils import extract_api_request_content
+from .utils import extract_api_content, extract_api_name
 
-# %% ../nbs/05_model.ipynb 6
+# %% ../nbs/05_model.ipynb 5
 class ToolFormer(nn.Module):
     def __init__(
         self,
@@ -41,20 +42,37 @@ class ToolFormer(nn.Module):
         self.api_start_token_id = tokenizer(f' {start_character}', return_tensors="pt")["input_ids"][0]
         self.api_end_token_id = tokenizer(end_character, return_tensors="pt")["input_ids"][0]
         self.api_output_token_id = tokenizer(f'{output_character}', return_tensors="pt")["input_ids"][0]
-    
+
+        self.eos_token_ids = tokenizer(
+            [".", ".\n\n"],
+            return_tensors="pt"
+        )["input_ids"].squeeze()
+
         # TODO: support batch
         self.api_request_content: torch.Tensor = torch.tensor([])
     
     def _sampling(self, probs: TensorType["batch_size", "seq_len"]) -> TensorType["batch_size", "seq_len"]:
         return torch.argmax(probs, dim=-1)
     
-    def execute_api(self, text_ids: TensorType["seq_len"]) -> TensorType["seq_len"]:
+    def execute_api(self, text_ids: TensorType["seq_len"]) -> Optional[TensorType["seq_len"]]:
         """Execute an API call."""
-        # content_ids = extract_api_request_content(text_ids, self.apis)
-        pass
+        text = self.tokenizer.decode(text_ids, skip_special_tokens=True)
+        api_name = extract_api_name(text, is_end_token=False)
+
+        if api_name is not None:
+            # find does apis contains the api_name
+            for api in self.apis:
+                if api.name == api_name:
+                    api_content = extract_api_content(text, api_name=api_name)
+                    api_output = api(api_content)
+                    return self.tokenizer(api_output, return_tensors="pt")["input_ids"][0]
+        return None
     
     def add_idx_to_api_request_content(self, idx: TensorType[1]):
-        self.api_request_content = torch.cat([self.api_request_content, idx.unsqueeze(0)], dim=0)
+        self.api_request_content = torch.cat([
+            self.api_request_content,
+            rearrange(idx, '... -> 1 ...')
+        ], dim=-1).long()
     
     def forward(
         self,
@@ -64,7 +82,6 @@ class ToolFormer(nn.Module):
         **kwargs
     ) -> TensorType["batch_size", "seq_len"]:
         # check padding to the left
-        
         generated_ids = input_ids
         
         for _ in range(max_new_tokens):
@@ -76,15 +93,23 @@ class ToolFormer(nn.Module):
             
             logits = output_ids.logits[:, -1, :]
             probs = F.softmax(logits, dim=-1)
-            _, top_k_idx = torch.topk(probs, k=5, dim=-1)
+            # TODO: k should be a config
+            _, top_k_idx = torch.topk(probs, k=1, dim=-1)
             
             if self.is_calling_api is True:
                 if self.api_end_token_id in top_k_idx:
                     # if the api end token is in the top_k_idx, then we will execute the api
                     # and then add api_end_token_id to the generated_ids
-                    self.add_idx_to_api_request_content(self.api_end_token_id)
-                    api_output_ids = self.execute_api(self.api_request_content)
-                    pred_ids = torch.tensor([self.api_end_token_id, api_output_ids])
+                    # TODO: add support batch
+                    api_output_ids = self.execute_api(self.api_request_content[0])
+                    if api_output_ids is not None:
+                        pred_ids = torch.cat([
+                            self.api_output_token_id,
+                            api_output_ids,
+                            self.api_end_token_id
+                        ], dim=-1).long()
+                    else:
+                        pred_ids = self.api_end_token_id
                     self.is_calling_api = False
                 else:
                     pred_ids = self._sampling(probs)
@@ -98,7 +123,18 @@ class ToolFormer(nn.Module):
                 else:
                     pred_ids = self._sampling(probs)
             
-            generated_ids = torch.cat([generated_ids, pred_ids.unsqueeze(dim=1)], dim=1)
-            attention_mask = torch.cat([attention_mask, torch.ones_like(pred_ids).unsqueeze(dim=1)], dim=1)
+            generated_ids = torch.cat([
+                generated_ids,
+                rearrange(pred_ids, '... -> 1 ...')
+            ], dim=1)
+            
+            attention_mask = torch.cat([
+                attention_mask,
+                rearrange(torch.ones_like(pred_ids), '... -> 1 ...')
+            ], dim=1)
+            
+            # ignore the case that pred_ids contains api_output
+            if len(pred_ids) == 1 and pred_ids in self.eos_token_ids:
+                break
         
         return generated_ids
